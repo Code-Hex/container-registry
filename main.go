@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/julienschmidt/httprouter"
@@ -120,21 +122,26 @@ func DeterminingSupport() http.Handler {
 	})
 }
 
-const jsonDigest = "6858809bf669cc5da7cb6af83d0fae838284d12e1be0182f92f6bd96559873e3"
+const jsonDigest = "bf756fb1ae65adf866bd8c456593cd24beb6a0a061dedf42b26a993176745f6b"
 
 // PullingBlobs to pull a blob.
 func PullingBlobs() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		params := httprouter.ParamsFromContext(r.Context())
 		digest := params.ByName("digest")
+		if index := strings.Index(digest, ":"); index != -1 {
+			digest = digest[index+1:]
+		}
 
 		if digest == jsonDigest {
 			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("content-type", "application/octet-stream")
 			w.Write([]byte(helloworldBlob))
 			return
 		}
-		f, err := os.Open("testdata/" + digest)
+		path := filepath.Join("testdata", digest, "layer.tar.gz")
+		f, err := os.Open(path)
 		if errors.Is(err, os.ErrNotExist) {
 			writeErrorResponse(w,
 				http.StatusNotFound,
