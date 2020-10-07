@@ -190,7 +190,7 @@ func PullingManifests() http.Handler {
 		}
 		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 		w.Write([]byte(helloworldManifest))
 	})
 }
