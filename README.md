@@ -1,4 +1,6 @@
-try on docker registry (based on https://containers.gitbook.io/build-containers-the-hard-way/)
+## Pull
+
+### try on docker registry (based on https://containers.gitbook.io/build-containers-the-hard-way/)
 
 ```sh
 $ TOKEN=$(curl "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/hello-world:pull" | jq .access_token -r)
@@ -25,3 +27,17 @@ $ curl "https://registry.hub.docker.com/v2/library/hello-world/blobs/sha256:bf75
 
 $ curl "https://registry.hub.docker.com/v2/library/hello-world/blobs/sha256:0e03bdcc26d7a9a57ef3b6f1bf1a210cff6239bff7c8cac72435984032851689" -H "Authorization: Bearer $TOKEN" -L -o layer.tar.gz
 ```
+
+### try docker pull on localhost
+
+Need to fix `/etc/hosts` like below.
+
+```
+...
+
+# Added by manually
+127.0.0.1 codehex-local
+# End of section
+`
+
+Then you can try to pull `$ docker pull codehex-local:5080/hello-world:latest`
