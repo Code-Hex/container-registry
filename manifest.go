@@ -1,5 +1,6 @@
 package main
 
+// https://docs.docker.com/registry/spec/manifest-v2-2/
 const helloworldManifest = `{
 	"schemaVersion": 2,
 	"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
