@@ -38,6 +38,6 @@ Need to fix `/etc/hosts` like below.
 # Added by manually
 127.0.0.1 codehex-local
 # End of section
-`
+```
 
 Then you can try to pull `$ docker pull codehex-local:5080/hello-world:latest`
