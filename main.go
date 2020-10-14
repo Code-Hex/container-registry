@@ -14,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/julienschmidt/httprouter"
+	"github.com/Code-Hex/go-router-simple"
 )
 
 const (
@@ -42,43 +42,71 @@ func ServerApply(h http.Handler, adapters ...ServerAdapter) http.Handler {
 	return h
 }
 
+// Grammar: https://github.com/docker/distribution/blob/2800ab02245e2eafc10e338939511dd1aeb5e135/reference/reference.go#L4-L24
+const (
+	reference = name + (`(?::` + tag + `)?`) + (`(?:@` + digest + `)?`)
+
+	name            = (`(?:` + domain + `\/)?`) + pathComponent + (`(?:\/` + pathComponent + `)*`)
+	domain          = domainComponent + (`(?:\.` + domainComponent + `)*`) + ("(?::" + portNumber + ")?")
+	domainComponent = `(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])`
+	portNumber      = `[0-9]+`
+	tag             = `[\w][\w.-]{0,127}`
+	pathComponent   = alphaNumeric + (`(?:` + separator + alphaNumeric + `)*`)
+	alphaNumeric    = `[a-z0-9]+`
+	separator       = `[_.]|__|[-]*`
+
+	digest                   = digestAlgorithm + ":" + digestHex
+	digestAlgorithm          = digestAlgorithmComponent + (`(?:` + digestAlgorithmSeparator + digestAlgorithmComponent + `)*`)
+	digestAlgorithmSeparator = `[+.-_]`
+	digestAlgorithmComponent = `[A-Za-z][A-Za-z0-9]*`
+	digestHex                = `[0-9a-fA-F]{32,}`
+)
+
 // spec
 // https://github.com/opencontainers/distribution-spec/blob/master/spec.md
 func main() {
+	rs := router.New()
 
-	router := httprouter.New()
 	// https://github.com/opencontainers/distribution-spec/blob/master/spec.md#endpoints
-	router.Handler(GET, "/v2/", DeterminingSupport())
+	rs.GET("/v2/", DeterminingSupport())
 
 	// /v2/:name/blobs/:digest
-	router.Handler(GET, "/v2/:name/blobs/:digest", PullingBlobs())
-	//router.Handler(GET, "/v2/:name/:name2/blobs/:digest", PullingBlobs())
+	rs.GET(
+		fmt.Sprintf(
+			`/v2/{name:%s}/blobs/{digest:%s}`,
+			name, digestHex,
+		),
+		PullingBlobs(),
+	)
 
 	// /v2/:name/manifests/:reference
-	router.Handler(GET, "/v2/:name/manifests/:reference", PullingManifests())
-	//router.Handler(GET, "/v2/:name/:name2/manifests/:reference", PullingManifests())
+	rs.GET(
+		fmt.Sprintf(
+			`/v2/{name:%s}/manifests/{reference:%s}`,
+			name, reference,
+		),
+		PullingManifests(),
+	)
 
 	// /?digest=<digest>
-	router.Handler(POST, "/v2/:name/blobs/uploads/", nil)
+	rs.Handle(POST, "/v2/:name/blobs/uploads/", nil)
 
-	router.Handler(PATCH, "/v2/:name/blobs/uploads/:reference", nil)
+	rs.Handle(PATCH, "/v2/:name/blobs/uploads/:reference", nil)
 
 	// /?digest=<digest>
-	router.Handler(PUT, "/v2/:name/blobs/uploads/:reference", nil)
+	rs.Handle(PUT, "/v2/:name/blobs/uploads/:reference", nil)
 
-	router.Handler(PUT, "/v2/:name/manifests/:reference", nil)
+	rs.Handle(PUT, "/v2/:name/manifests/:reference", nil)
 
 	// /?n=<integer>&last=<integer>
-	router.Handler(GET, "/v2/:name/tags/list", nil)
+	rs.Handle(GET, "/v2/:name/tags/list", nil)
 
-	router.Handler(DELETE, "/v2/:name/manifests/:reference", nil)
+	rs.Handle(DELETE, "/v2/:name/manifests/:reference", nil)
 
-	router.Handler(DELETE, "/v2/:name/blobs/:digest", nil)
-
-	_ = router
+	rs.Handle(DELETE, "/v2/:name/blobs/:digest", nil)
 
 	srv := &http.Server{
-		Handler: ServerApply(router, AccessLogServerAdapter()),
+		Handler: ServerApply(rs, AccessLogServerAdapter()),
 	}
 	errCh := make(chan struct{})
 	go func() {
@@ -127,8 +155,8 @@ const jsonDigest = "bf756fb1ae65adf866bd8c456593cd24beb6a0a061dedf42b26a99317674
 // PullingBlobs to pull a blob.
 func PullingBlobs() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		params := httprouter.ParamsFromContext(r.Context())
-		digest := params.ByName("digest")
+		ctx := r.Context()
+		digest := router.ParamFromContext(ctx, "digest")
 		if index := strings.Index(digest, ":"); index != -1 {
 			digest = digest[index+1:]
 		}
@@ -172,15 +200,11 @@ func PullingBlobs() http.Handler {
 // PullingManifests to pull a manifest.
 func PullingManifests() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		params := httprouter.ParamsFromContext(r.Context())
-		name := params.ByName("name")
-		name2 := params.ByName("name2")
-		if name2 != "" {
-			name = name + "/" + name2
-		}
-		ref := params.ByName("reference")
+		ctx := r.Context()
+		name := router.ParamFromContext(ctx, "name")
+		ref := router.ParamFromContext(ctx, "reference")
 
-		if name != "hello-world" || ref != "latest" {
+		if name != "library/hello-world" || ref != "latest" {
 			writeErrorResponse(w,
 				http.StatusNotFound,
 				&ErrorResponse{
