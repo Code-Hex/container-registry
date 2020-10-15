@@ -1,5 +1,9 @@
 package main
 
+import (
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+)
+
 // https://docs.docker.com/registry/spec/manifest-v2-2/
 const helloworldManifest = `{
 	"schemaVersion": 2,
@@ -17,3 +21,10 @@ const helloworldManifest = `{
 	   }
 	]
  }`
+
+type Manifest struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	MediaType     string               `json:"mediaType"`
+	Config        ocispec.Descriptor   `json:"config"`
+	Layers        []ocispec.Descriptor `json:"layers"`
+}

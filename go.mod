@@ -2,4 +2,9 @@ module github.com/Code-Hex/container-registry
 
 go 1.15
 
-require github.com/Code-Hex/go-router-simple v0.0.1
+require (
+	github.com/Code-Hex/go-router-simple v0.0.1
+	github.com/google/uuid v1.1.2
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.0.1
+)

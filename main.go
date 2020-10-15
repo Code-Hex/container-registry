@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,10 +12,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/Code-Hex/go-router-simple"
+	"github.com/google/uuid"
 )
 
 const (
@@ -62,6 +65,8 @@ const (
 	digestHex                = `[0-9a-fA-F]{32,}`
 )
 
+const hostname = "localhost:5080"
+
 // spec
 // https://github.com/opencontainers/distribution-spec/blob/master/spec.md
 func main() {
@@ -89,14 +94,63 @@ func main() {
 	)
 
 	// /?digest=<digest>
-	rs.Handle(POST, "/v2/:name/blobs/uploads/", nil)
+	rs.POST(
+		fmt.Sprintf(
+			`/v2/{name:%s}/blobs/uploads/`,
+			name,
+		),
+		PushBlob(),
+	)
 
-	rs.Handle(PATCH, "/v2/:name/blobs/uploads/:reference", nil)
+	rs.PATCH(
+		fmt.Sprintf(
+			`/v2/{name:%s}/blobs/uploads/{reference:%s}`,
+			name, reference,
+		),
+		PushBlobPatch(),
+	)
 
 	// /?digest=<digest>
-	rs.Handle(PUT, "/v2/:name/blobs/uploads/:reference", nil)
+	rs.PUT(
+		fmt.Sprintf(
+			`/v2/{name:%s}/blobs/uploads/{reference:%s}`,
+			name, reference,
+		),
+		PushBlobPut(),
+	)
 
-	rs.Handle(PUT, "/v2/:name/manifests/:reference", nil)
+	rs.HEAD(
+		fmt.Sprintf(
+			`/v2/{name:%s}/blobs/{digest:%s}`,
+			name, digest,
+		),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			digest := router.ParamFromContext(r.Context(), "digest")
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			w.Header().Set("Content-Length", strconv.Itoa(len(helloworldManifest)))
+			w.WriteHeader(http.StatusAccepted)
+		}),
+	)
+
+	rs.PUT(
+		fmt.Sprintf(
+			`/v2/{name:%s}/manifests/{tag:%s}`,
+			name, tag,
+		),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var m Manifest
+			if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+				log.Println(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			//ctx := r.Context()
+			w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
+			w.WriteHeader(http.StatusCreated)
+		}),
+	)
 
 	// /?n=<integer>&last=<integer>
 	rs.Handle(GET, "/v2/:name/tags/list", nil)
@@ -110,7 +164,7 @@ func main() {
 	}
 	errCh := make(chan struct{})
 	go func() {
-		addr := "localhost:5080"
+		addr := hostname
 		log.Printf("running %q", addr)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
@@ -223,5 +277,77 @@ func PullingManifests() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 		w.Write([]byte(helloworldManifest))
+	})
+}
+
+func PushBlob() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uuid := uuid.New().String()
+		name := router.ParamFromContext(r.Context(), "name")
+		location := "/v2/" + name + "/blobs/uploads/" + uuid
+		//log.Println(location)
+		w.Header().Set("Location", location)
+		w.WriteHeader(http.StatusAccepted)
+	})
+}
+
+func PushBlobPatch() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		name := router.ParamFromContext(ctx, "name")
+		reference := router.ParamFromContext(ctx, "reference")
+
+		path := filepath.Join("testdata", reference)
+		os.MkdirAll(path, 0700)
+
+		f, err := os.Create(path + "/" + "layer.tar.gz")
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		size, err := io.Copy(f, r.Body)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		location := "/v2/" + name + "/blobs/uploads/" + reference
+		w.Header().Set("Location", location)
+		w.Header().Set("Docker-Upload-UUID", reference)
+		w.Header().Set("Range", fmt.Sprintf("0-%d", size))
+		w.WriteHeader(http.StatusAccepted)
+	})
+}
+
+func PushBlobPut() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		digest := r.URL.Query().Get("digest")
+		sep := strings.SplitN(digest, ":", 2)
+		if len(sep) != 2 {
+			log.Println(sep)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		digestHex := sep[1]
+
+		os.MkdirAll("testdata/"+digestHex, 0700)
+
+		ctx := r.Context()
+		reference := router.ParamFromContext(ctx, "reference")
+		uuid := reference
+		oldpath := filepath.Join("testdata", uuid, "layer.tar.gz")
+		newpath := filepath.Join("testdata", digestHex, "layer.tar.gz")
+		if err := os.Rename(oldpath, newpath); err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		os.Remove("testdata/" + uuid)
+
+		w.WriteHeader(http.StatusCreated)
 	})
 }
