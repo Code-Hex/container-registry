@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Code-Hex/container-registry/internal/registry"
@@ -33,7 +34,7 @@ func TestPathJoinWithBase(t *testing.T) {
 				},
 			},
 			basePath: "base",
-			want:     "base/library/hello-world/digest/layer.tar.gz",
+			want:     filepath.Join("base", "library/hello-world", "digest", "layer.tar.gz"),
 		},
 	}
 	for _, tt := range tests {
