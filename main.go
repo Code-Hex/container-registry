@@ -360,8 +360,23 @@ func PushBlobHead() http.Handler {
 
 func PushManifestPut() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		var m Manifest
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		name := router.ParamFromContext(ctx, "name")
+		path := joinWithBasePath(name, "manifest.json")
+		f, err := os.Create(path)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+		if err := json.NewEncoder(f).Encode(&m); err != nil {
 			log.Println(err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
