@@ -124,13 +124,7 @@ func main() {
 			`/v2/{name:%s}/blobs/{digest:%s}`,
 			name, digest,
 		),
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			digest := router.ParamFromContext(r.Context(), "digest")
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-			w.Header().Set("Content-Length", strconv.Itoa(len(helloworldManifest)))
-			w.WriteHeader(http.StatusAccepted)
-		}),
+		PushBlobHead(),
 	)
 
 	rs.PUT(
@@ -138,18 +132,7 @@ func main() {
 			`/v2/{name:%s}/manifests/{tag:%s}`,
 			name, tag,
 		),
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var m Manifest
-			if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-				log.Println(err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			//ctx := r.Context()
-			w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
-			w.WriteHeader(http.StatusCreated)
-		}),
+		PushManifestPut(),
 	)
 
 	// /?n=<integer>&last=<integer>
@@ -348,6 +331,31 @@ func PushBlobPut() http.Handler {
 		}
 		os.Remove("testdata/" + uuid)
 
+		w.WriteHeader(http.StatusCreated)
+	})
+}
+
+func PushBlobHead() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		digest := router.ParamFromContext(r.Context(), "digest")
+		w.Header().Set("Docker-Content-Digest", digest)
+		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(helloworldManifest)))
+		w.WriteHeader(http.StatusAccepted)
+	})
+}
+
+func PushManifestPut() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m Manifest
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		//ctx := r.Context()
+		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
 		w.WriteHeader(http.StatusCreated)
 	})
 }
