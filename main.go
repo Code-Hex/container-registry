@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/h2non/filetype"
@@ -64,7 +64,7 @@ func main() {
 	rs.GET(
 		fmt.Sprintf(
 			`/v2/{name:%s}/blobs/{digest:%s}`,
-			grammar.Name, grammar.DigestHex,
+			grammar.Name, grammar.Digest,
 		),
 		PullingBlobs(),
 	)
@@ -172,8 +172,6 @@ func DeterminingSupport() http.Handler {
 	})
 }
 
-const jsonDigest = "bf756fb1ae65adf866bd8c456593cd24beb6a0a061dedf42b26a993176745f6b"
-
 // PullingBlobs to pull a blob.
 func PullingBlobs() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -185,18 +183,9 @@ func PullingBlobs() http.Handler {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-
-		if dgst == jsonDigest {
-			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("content-type", "application/octet-stream")
-			w.Write([]byte(helloworldBlob))
-			return
-		}
-		dgstHex := dgst.Hex()
-		path := filepath.Join("testdata", dgstHex, "layer.tar.gz")
-		f, err := os.Open(path)
-		if errors.Is(err, os.ErrNotExist) {
+		name := router.ParamFromContext(ctx, "name")
+		dir := joinWithBasePath(name, dgst.String())
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			writeErrorResponse(w,
 				http.StatusNotFound,
 				&ErrorResponse{
@@ -204,21 +193,38 @@ func PullingBlobs() http.Handler {
 						{
 							"BLOB_UNKNOWN",
 							"blob unknown to registry",
-							"sha256:" + dgstHex,
+							dgst.String(),
 						},
 					},
 				},
 			)
 			return
 		}
+
+		fis, err := ioutil.ReadDir(dir)
+		if err != nil || len(fis) != 1 {
+			log.Printf("unexpected directory: %q, err: %v, fis: %q", dir, err, fis)
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		filename := fis[0].Name()
+		if strings.HasSuffix(filename, ".json") {
+			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("content-type", "application/octet-stream")
+		} else {
+			w.Header().Set("accept-ranges", "bytes")
+			w.Header().Set("content-type", "application/octet-stream")
+		}
+
+		path := filepath.Join(dir, filename)
+		f, err := os.Open(path)
 		if err != nil {
+			log.Println(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		defer f.Close()
-
-		w.Header().Set("accept-ranges", "bytes")
-		w.Header().Set("content-type", "application/octet-stream")
 		io.Copy(w, f)
 	})
 }
@@ -228,9 +234,10 @@ func PullingManifests() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		ref := router.ParamFromContext(ctx, "reference")
+		tag := router.ParamFromContext(ctx, "reference")
 
-		if name != "library/hello-world" || ref != "latest" {
+		manifest := joinWithBasePath(name, "manifest.json")
+		if _, err := os.Stat(manifest); os.IsNotExist(err) {
 			writeErrorResponse(w,
 				http.StatusNotFound,
 				&ErrorResponse{
@@ -238,17 +245,26 @@ func PullingManifests() http.Handler {
 						{
 							"MANIFEST_UNKNOWN",
 							"manifest unknown",
-							fmt.Sprintf(`{"name":"%s","tag":"%s"}`, name, ref),
+							tag,
 						},
 					},
 				},
 			)
 			return
 		}
+
+		f, err := os.Open(manifest)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
 		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-		w.Write([]byte(helloworldManifest))
+		io.Copy(w, f)
 	})
 }
 
