@@ -72,7 +72,7 @@ func main() {
 	// /v2/:name/manifests/:reference
 	rs.GET(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{reference:%s}`,
+			`/v2/{name:%s}/manifests/{tag:%s}`,
 			grammar.Name, grammar.Reference,
 		),
 		PullingManifests(),
@@ -234,9 +234,9 @@ func PullingManifests() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		tag := router.ParamFromContext(ctx, "reference")
+		tag := router.ParamFromContext(ctx, "tag")
 
-		manifest := joinWithBasePath(name, "manifest.json")
+		manifest := joinWithBasePath(name, tag, "manifest.json")
 		if _, err := os.Stat(manifest); os.IsNotExist(err) {
 			writeErrorResponse(w,
 				http.StatusNotFound,
@@ -409,7 +409,10 @@ func PushManifestPut() http.Handler {
 			return
 		}
 		name := router.ParamFromContext(ctx, "name")
-		path := joinWithBasePath(name, "manifest.json")
+		tag := router.ParamFromContext(ctx, "tag")
+		path := joinWithBasePath(name, tag)
+		os.MkdirAll(path, 0700)
+		path = filepath.Join(path, "manifest.json")
 		f, err := os.Create(path)
 		if err != nil {
 			log.Println(err)
