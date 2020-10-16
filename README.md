@@ -41,3 +41,14 @@ Need to fix `/etc/hosts` like below.
 ```
 
 Then you can try to pull `$ docker pull codehex-local:5080/hello-world:latest`
+
+
+## debug
+
+### docker daemon
+
+**MacOS**
+
+```
+$ tail -f ~/Library/Containers/com.docker.docker/Data/log/vm/dockerd.log
+```
