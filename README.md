@@ -1,3 +1,5 @@
+![test](https://github.com/Code-Hex/container-registry/workflows/test/badge.svg)
+
 ## Pull
 
 ### try on docker registry (based on https://containers.gitbook.io/build-containers-the-hard-way/)
