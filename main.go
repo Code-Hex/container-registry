@@ -13,11 +13,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 
+	"github.com/Code-Hex/container-registry/internal/grammar"
 	"github.com/Code-Hex/go-router-simple"
 	"github.com/google/uuid"
+	digest "github.com/opencontainers/go-digest"
 )
 
 const (
@@ -45,26 +46,6 @@ func ServerApply(h http.Handler, adapters ...ServerAdapter) http.Handler {
 	return h
 }
 
-// Grammar: https://github.com/docker/distribution/blob/2800ab02245e2eafc10e338939511dd1aeb5e135/reference/reference.go#L4-L24
-const (
-	reference = name + (`(?::` + tag + `)?`) + (`(?:@` + digest + `)?`)
-
-	name            = (`(?:` + domain + `\/)?`) + pathComponent + (`(?:\/` + pathComponent + `)*`)
-	domain          = domainComponent + (`(?:\.` + domainComponent + `)*`) + ("(?::" + portNumber + ")?")
-	domainComponent = `(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])`
-	portNumber      = `[0-9]+`
-	tag             = `[\w][\w.-]{0,127}`
-	pathComponent   = alphaNumeric + (`(?:` + separator + alphaNumeric + `)*`)
-	alphaNumeric    = `[a-z0-9]+`
-	separator       = `[_.]|__|[-]*`
-
-	digest                   = digestAlgorithm + ":" + digestHex
-	digestAlgorithm          = digestAlgorithmComponent + (`(?:` + digestAlgorithmSeparator + digestAlgorithmComponent + `)*`)
-	digestAlgorithmSeparator = `[+.-_]`
-	digestAlgorithmComponent = `[A-Za-z][A-Za-z0-9]*`
-	digestHex                = `[0-9a-fA-F]{32,}`
-)
-
 const hostname = "localhost:5080"
 
 // spec
@@ -79,7 +60,7 @@ func main() {
 	rs.GET(
 		fmt.Sprintf(
 			`/v2/{name:%s}/blobs/{digest:%s}`,
-			name, digestHex,
+			grammar.Name, grammar.DigestHex,
 		),
 		PullingBlobs(),
 	)
@@ -88,7 +69,7 @@ func main() {
 	rs.GET(
 		fmt.Sprintf(
 			`/v2/{name:%s}/manifests/{reference:%s}`,
-			name, reference,
+			grammar.Name, grammar.Reference,
 		),
 		PullingManifests(),
 	)
@@ -97,7 +78,7 @@ func main() {
 	rs.POST(
 		fmt.Sprintf(
 			`/v2/{name:%s}/blobs/uploads/`,
-			name,
+			grammar.Name,
 		),
 		PushBlob(),
 	)
@@ -105,7 +86,7 @@ func main() {
 	rs.PATCH(
 		fmt.Sprintf(
 			`/v2/{name:%s}/blobs/uploads/{reference:%s}`,
-			name, reference,
+			grammar.Name, grammar.Reference,
 		),
 		PushBlobPatch(),
 	)
@@ -114,7 +95,7 @@ func main() {
 	rs.PUT(
 		fmt.Sprintf(
 			`/v2/{name:%s}/blobs/uploads/{reference:%s}`,
-			name, reference,
+			grammar.Name, grammar.Reference,
 		),
 		PushBlobPut(),
 	)
@@ -122,7 +103,7 @@ func main() {
 	rs.HEAD(
 		fmt.Sprintf(
 			`/v2/{name:%s}/blobs/{digest:%s}`,
-			name, digest,
+			grammar.Name, grammar.Digest,
 		),
 		PushBlobHead(),
 	)
@@ -130,7 +111,7 @@ func main() {
 	rs.PUT(
 		fmt.Sprintf(
 			`/v2/{name:%s}/manifests/{tag:%s}`,
-			name, tag,
+			grammar.Name, grammar.Tag,
 		),
 		PushManifestPut(),
 	)
@@ -193,19 +174,23 @@ const jsonDigest = "bf756fb1ae65adf866bd8c456593cd24beb6a0a061dedf42b26a99317674
 func PullingBlobs() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		digest := router.ParamFromContext(ctx, "digest")
-		if index := strings.Index(digest, ":"); index != -1 {
-			digest = digest[index+1:]
+		dq := router.ParamFromContext(ctx, "digest")
+		dgst, err := digest.Parse(dq)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 
-		if digest == jsonDigest {
+		if dgst == jsonDigest {
 			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("content-type", "application/octet-stream")
 			w.Write([]byte(helloworldBlob))
 			return
 		}
-		path := filepath.Join("testdata", digest, "layer.tar.gz")
+		dgstHex := dgst.Hex()
+		path := filepath.Join("testdata", dgstHex, "layer.tar.gz")
 		f, err := os.Open(path)
 		if errors.Is(err, os.ErrNotExist) {
 			writeErrorResponse(w,
@@ -215,7 +200,7 @@ func PullingBlobs() http.Handler {
 						{
 							"BLOB_UNKNOWN",
 							"blob unknown to registry",
-							"sha256:" + digest,
+							"sha256:" + dgstHex,
 						},
 					},
 				},
@@ -308,14 +293,13 @@ func PushBlobPatch() http.Handler {
 
 func PushBlobPut() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		digest := r.URL.Query().Get("digest")
-		sep := strings.SplitN(digest, ":", 2)
-		if len(sep) != 2 {
-			log.Println(sep)
-			w.WriteHeader(http.StatusInternalServerError)
+		dgst, err := digest.Parse(r.URL.Query().Get("digest"))
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		digestHex := sep[1]
+		digestHex := dgst.Hex()
 
 		os.MkdirAll("testdata/"+digestHex, 0700)
 
@@ -337,8 +321,8 @@ func PushBlobPut() http.Handler {
 
 func PushBlobHead() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		digest := router.ParamFromContext(r.Context(), "digest")
-		w.Header().Set("Docker-Content-Digest", digest)
+		dgst := router.ParamFromContext(r.Context(), "digest")
+		w.Header().Set("Docker-Content-Digest", dgst)
 		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 		w.Header().Set("Content-Length", strconv.Itoa(len(helloworldManifest)))
 		w.WriteHeader(http.StatusAccepted)
@@ -353,8 +337,6 @@ func PushManifestPut() http.Handler {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-
-		//ctx := r.Context()
 		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
 		w.WriteHeader(http.StatusCreated)
 	})
