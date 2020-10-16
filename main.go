@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,7 +16,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/h2non/filetype"
+	"github.com/Code-Hex/container-registry/internal/registry"
 
 	"github.com/Code-Hex/container-registry/internal/grammar"
 	"github.com/Code-Hex/go-router-simple"
@@ -184,7 +183,7 @@ func PullingBlobs() http.Handler {
 			return
 		}
 		name := router.ParamFromContext(ctx, "name")
-		dir := joinWithBasePath(name, dgst.String())
+		dir := registry.PathJoinWithBase(name, dgst.String())
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			writeErrorResponse(w,
 				http.StatusNotFound,
@@ -236,7 +235,7 @@ func PullingManifests() http.Handler {
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
 
-		manifest := joinWithBasePath(name, tag, "manifest.json")
+		manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
 		if _, err := os.Stat(manifest); os.IsNotExist(err) {
 			writeErrorResponse(w,
 				http.StatusNotFound,
@@ -273,7 +272,7 @@ func PushBlob() http.Handler {
 
 		uuid := uuid.New().String()
 		name := router.ParamFromContext(r.Context(), "name")
-		os.MkdirAll(joinWithBasePath(name), 0700)
+		os.MkdirAll(registry.PathJoinWithBase(name), 0700)
 		location := "/v2/" + name + "/blobs/uploads/" + uuid
 		//log.Println(location)
 		w.Header().Set("Location", location)
@@ -289,27 +288,10 @@ func PushBlobPatch() http.Handler {
 		name := router.ParamFromContext(ctx, "name")
 		reference := router.ParamFromContext(ctx, "reference")
 
-		path := joinWithBasePath(name, reference)
+		path := registry.PathJoinWithBase(name, reference)
 		os.MkdirAll(path, 0700)
 
-		// see filetype.MatchReader
-		buffer := make([]byte, 8192)
-		n, err := r.Body.Read(buffer)
-		if err != nil && err != io.EOF {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		f, err := os.Create(path + "/" + "layer" + detectExt(buffer))
-		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		defer f.Close()
-
-		size, err := io.Copy(f, io.MultiReader(bytes.NewReader(buffer[:n]), r.Body))
+		size, err := registry.CreateLayer(r.Body, path)
 		if err != nil {
 			log.Println(err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -334,12 +316,12 @@ func PushBlobPut() http.Handler {
 		}
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		newDir := joinWithBasePath(name, dgst.String())
+		newDir := registry.PathJoinWithBase(name, dgst.String())
 		os.MkdirAll(newDir, 0700)
 
 		reference := router.ParamFromContext(ctx, "reference")
 		uuid := reference
-		oldDir := joinWithBasePath(name, uuid)
+		oldDir := registry.PathJoinWithBase(name, uuid)
 		fis, err := ioutil.ReadDir(oldDir)
 		if err != nil || len(fis) != 1 {
 			log.Printf("unexpected directory: %q, err: %v, fis: %q", oldDir, err, fis)
@@ -372,7 +354,7 @@ func PushBlobHead() http.Handler {
 			return
 		}
 		name := router.ParamFromContext(ctx, "name")
-		dir := joinWithBasePath(name, dgst.String())
+		dir := registry.PathJoinWithBase(name, dgst.String())
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -410,7 +392,7 @@ func PushManifestPut() http.Handler {
 		}
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
-		path := joinWithBasePath(name, tag)
+		path := registry.PathJoinWithBase(name, tag)
 		os.MkdirAll(path, 0700)
 		path = filepath.Join(path, "manifest.json")
 		f, err := os.Create(path)
@@ -428,23 +410,4 @@ func PushManifestPut() http.Handler {
 		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
 		w.WriteHeader(http.StatusCreated)
 	})
-}
-
-func joinWithBasePath(name string, p ...string) string {
-	return filepath.Join(
-		append(
-			[]string{
-				"testdata",
-				name,
-			},
-			p...,
-		)...,
-	)
-}
-
-func detectExt(buf []byte) string {
-	if filetype.IsArchive(buf) {
-		return ".tar.gz"
-	}
-	return ".json"
 }
