@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -252,6 +253,7 @@ func PushBlob() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uuid := uuid.New().String()
 		name := router.ParamFromContext(r.Context(), "name")
+		os.MkdirAll(joinWithBasePath(name), 0700)
 		location := "/v2/" + name + "/blobs/uploads/" + uuid
 		//log.Println(location)
 		w.Header().Set("Location", location)
@@ -265,7 +267,7 @@ func PushBlobPatch() http.Handler {
 		name := router.ParamFromContext(ctx, "name")
 		reference := router.ParamFromContext(ctx, "reference")
 
-		path := filepath.Join("testdata", reference)
+		path := joinWithBasePath(name, reference)
 		os.MkdirAll(path, 0700)
 
 		f, err := os.Create(path + "/" + "layer.tar.gz")
@@ -299,21 +301,22 @@ func PushBlobPut() http.Handler {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		digestHex := dgst.Hex()
-
-		os.MkdirAll("testdata/"+digestHex, 0700)
-
 		ctx := r.Context()
+		name := router.ParamFromContext(ctx, "name")
+		newDir := joinWithBasePath(name, dgst.String())
+		os.MkdirAll(newDir, 0700)
+
 		reference := router.ParamFromContext(ctx, "reference")
 		uuid := reference
-		oldpath := filepath.Join("testdata", uuid, "layer.tar.gz")
-		newpath := filepath.Join("testdata", digestHex, "layer.tar.gz")
+		oldDir := joinWithBasePath(name, uuid)
+		oldpath := filepath.Join(oldDir, "layer.tar.gz")
+		newpath := filepath.Join(newDir, "layer.tar.gz")
 		if err := os.Rename(oldpath, newpath); err != nil {
 			log.Println(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		os.Remove("testdata/" + uuid)
+		os.Remove(oldDir)
 
 		w.WriteHeader(http.StatusCreated)
 	})
@@ -321,10 +324,36 @@ func PushBlobPut() http.Handler {
 
 func PushBlobHead() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dgst := router.ParamFromContext(r.Context(), "digest")
-		w.Header().Set("Docker-Content-Digest", dgst)
-		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-		w.Header().Set("Content-Length", strconv.Itoa(len(helloworldManifest)))
+		ctx := r.Context()
+		dq := router.ParamFromContext(ctx, "digest")
+		dgst, err := digest.Parse(dq)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		name := router.ParamFromContext(ctx, "name")
+		dir := joinWithBasePath(name, dgst.String())
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		fis, err := ioutil.ReadDir(dir)
+		if err != nil || len(fis) != 1 {
+			log.Printf("unexpected directory: %q, err: %v, fis: %q", dir, err, fis)
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		filename := fis[0].Name()
+		size := fis[0].Size()
+		ext := filepath.Ext(filename)
+		if ext == ".json" {
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+		} else {
+			w.Header().Set("Content-Type", "application/vnd.docker.image.rootfs.diff.tar.gzip")
+		}
+		w.Header().Set("Docker-Content-Digest", dgst.String())
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.WriteHeader(http.StatusAccepted)
 	})
 }
@@ -334,10 +363,22 @@ func PushManifestPut() http.Handler {
 		var m Manifest
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
 		w.WriteHeader(http.StatusCreated)
 	})
+}
+
+func joinWithBasePath(name string, p ...string) string {
+	return filepath.Join(
+		append(
+			[]string{
+				"testdata",
+				name,
+			},
+			p...,
+		)...,
+	)
 }
