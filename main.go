@@ -20,6 +20,7 @@ import (
 	"github.com/Code-Hex/go-router-simple"
 	"github.com/google/uuid"
 	digest "github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const (
@@ -35,16 +36,13 @@ const (
 	DELETE = http.MethodDelete
 )
 
-// ServerAdapter represents a apply middleware type for http server.
-type ServerAdapter func(http.Handler) http.Handler
-
-// ServerApply applies http server middlewares
-func ServerApply(h http.Handler, adapters ...ServerAdapter) http.Handler {
-	// To process from left to right, iterate from the last one.
-	for i := len(adapters) - 1; i >= 0; i-- {
-		h = adapters[i](h)
-	}
-	return h
+// Manifest represents manifest schema v2.
+// https://docs.docker.com/registry/spec/manifest-v2-2/
+type Manifest struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	MediaType     string               `json:"mediaType"`
+	Config        ocispec.Descriptor   `json:"config"`
+	Layers        []ocispec.Descriptor `json:"layers"`
 }
 
 const hostname = "localhost:5080"
