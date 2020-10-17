@@ -93,3 +93,51 @@ func TestCreateLayer(t *testing.T) {
 		})
 	}
 }
+
+func TestPickupFileinfo(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			wantErr: false,
+		},
+		{
+			name:    "invalid",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, err := ioutil.TempDir("", "")
+			if err != nil {
+				t.Fatalf("TempDir: %v", err)
+			}
+
+			var want string
+			if !tt.wantErr {
+				f, err := ioutil.TempFile(dir, "")
+				if err != nil {
+					t.Fatalf("TempFile: %v", err)
+				}
+				f.Close()
+				want = filepath.Base(f.Name())
+			}
+
+			got, err := registry.PickupFileinfo(dir)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PickupFileinfo() error = %v", err)
+			}
+			if want != got.Name() {
+				t.Fatalf("name want: %v, but got %v", want, got.Name())
+			}
+		})
+	}
+}
