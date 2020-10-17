@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -16,9 +15,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Code-Hex/container-registry/internal/registry"
-
 	"github.com/Code-Hex/container-registry/internal/grammar"
+	"github.com/Code-Hex/container-registry/internal/registry"
 	"github.com/Code-Hex/go-router-simple"
 	"github.com/google/uuid"
 	digest "github.com/opencontainers/go-digest"
@@ -200,13 +198,13 @@ func PullingBlobs() http.Handler {
 			return
 		}
 
-		fis, err := ioutil.ReadDir(dir)
-		if err != nil || len(fis) != 1 {
-			log.Printf("unexpected directory: %q, err: %v, fis: %q", dir, err, fis)
+		fi, err := registry.PickupFileinfo(dir)
+		if err != nil {
+			log.Printf("unexpected directory: %q, err: %v", dir, err)
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
-		filename := fis[0].Name()
+		filename := fi.Name()
 		if strings.HasSuffix(filename, ".json") {
 			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -322,13 +320,13 @@ func PushBlobPut() http.Handler {
 		reference := router.ParamFromContext(ctx, "reference")
 		uuid := reference
 		oldDir := registry.PathJoinWithBase(name, uuid)
-		fis, err := ioutil.ReadDir(oldDir)
-		if err != nil || len(fis) != 1 {
-			log.Printf("unexpected directory: %q, err: %v, fis: %q", oldDir, err, fis)
+		fi, err := registry.PickupFileinfo(oldDir)
+		if err != nil {
+			log.Printf("unexpected directory: %q, err: %v", oldDir, err)
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
-		filename := fis[0].Name()
+		filename := fi.Name()
 
 		oldpath := filepath.Join(oldDir, filename)
 		newpath := filepath.Join(newDir, filename)
@@ -359,14 +357,14 @@ func PushBlobHead() http.Handler {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		fis, err := ioutil.ReadDir(dir)
-		if err != nil || len(fis) != 1 {
-			log.Printf("unexpected directory: %q, err: %v, fis: %q", dir, err, fis)
+		fi, err := registry.PickupFileinfo(dir)
+		if err != nil {
+			log.Printf("unexpected directory: %q, err: %v", dir, err)
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
-		filename := fis[0].Name()
-		size := fis[0].Size()
+		filename := fi.Name()
+		size := fi.Size()
 		ext := filepath.Ext(filename)
 		if ext == ".json" {
 			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")

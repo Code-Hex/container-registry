@@ -2,7 +2,9 @@ package registry
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -49,4 +51,17 @@ func detectExt(buf []byte) string {
 		return ".tar.gz"
 	}
 	return ".json"
+}
+
+// PickupFileinfo picks up one file in the specified directory.
+// This function is expected to use if there's only one file in the directory.
+func PickupFileinfo(dir string) (os.FileInfo, error) {
+	fis, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(fis) == 0 {
+		return nil, fmt.Errorf("there is no file in %q directory", dir)
+	}
+	return fis[0], nil
 }
