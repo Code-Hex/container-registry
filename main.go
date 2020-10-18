@@ -206,7 +206,6 @@ func PullingManifests() http.Handler {
 func PushBlobPost() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
-		log.Println(r.Form)
 		sessionID := s.IssueSession()
 		name := router.ParamFromContext(r.Context(), "name")
 		location := "/v2/" + name + "/blobs/uploads/" + sessionID
@@ -256,6 +255,23 @@ func PushBlobPut() http.Handler {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		sessionID := router.ParamFromContext(ctx, "reference")
+
+		// For Pushing a blob monolithically: // POST -> PUT
+		// https://github.com/opencontainers/distribution-spec/blob/master/spec.md#pushing-a-blob-monolithically
+		contentType := r.Header.Get("Content-Type")
+		if contentType == "application/octet-stream" {
+			_, err := s.PutBlobBySession(sessionID, name, r.Body)
+			if err != nil {
+				return err
+			}
+			pullableLoc := "/v2/" + name + "/blobs/" + dgst.String()
+			w.Header().Set("Location", pullableLoc)
+			w.WriteHeader(http.StatusCreated)
+			return nil
+		}
+
+		// Pushing a blob in chunks
+		// POST -> PATCH -> PUT
 		if err := s.EnsurePutBlobBySession(sessionID, name, dgst.String()); err != nil {
 			return err
 		}
