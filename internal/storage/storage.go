@@ -12,12 +12,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// Repository represents the storage behavior.
 type Repository interface {
+	// Push
 	IssueSession() string
 	PutBlobBySession(sessionID string, imgName string, body io.Reader) (int64, error)
 	EnsurePutBlobBySession(sessionID string, imgName string, digest string) error
 	CheckBlobByDigest(digest string) (string, error)
 	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error)
+
+	// Pull
+	FindBlobByImage(name, digest string) (*os.File, error)
+	FindManifestByImage(name, tag string) (*registry.Manifest, error)
 }
 
 // Local implemented Repository using local storage.
@@ -95,6 +101,44 @@ func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*regist
 	}
 	defer f.Close()
 	if err := json.NewEncoder(f).Encode(&m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// FindBlobByImage finds blob by docker image name and that's digest.
+//
+// digest format is like <digest-alg>:<digest>. see grammar.Digest
+func (l *Local) FindBlobByImage(name, digest string) (*os.File, error) {
+	dir := registry.PathJoinWithBase(name, digest)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, errors.Wrap(err,
+			errors.WithCodeBlobUnknown(),
+		)
+	}
+	fi, err := registry.PickupFileinfo(dir)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, fi.Name())
+	return os.Open(path)
+}
+
+// FindManifestByImage finds manifest json file by image name and that's digest.
+func (l *Local) FindManifestByImage(name, tag string) (*registry.Manifest, error) {
+	manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
+	if _, err := os.Stat(manifest); os.IsNotExist(err) {
+		return nil, errors.Wrap(err,
+			errors.WithCodeManifestUnknown(),
+		)
+	}
+	f, err := os.Open(manifest)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var m registry.Manifest
+	if err := json.NewDecoder(f).Decode(&m); err != nil {
 		return nil, err
 	}
 	return &m, nil

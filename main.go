@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -9,9 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/Code-Hex/container-registry/internal/errors"
@@ -113,7 +112,7 @@ func main() {
 	rs.Handle(DELETE, "/v2/:name/blobs/:digest", nil)
 
 	srv := &http.Server{
-		Handler: ServerApply(rs, AccessLogServerAdapter()),
+		Handler: ServerApply(rs, AccessLogServerAdapter(), SetHeaderServerAdapter()),
 	}
 	errCh := make(chan struct{})
 	go func() {
@@ -148,10 +147,6 @@ func main() {
 // This endpoint MAY be used for authentication/authorization purposes, but this is out of the purview of this specification.
 func DeterminingSupport() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
-		// Important/Required HTTP-Headers
-		// https://docs.docker.com/registry/deploying/#importantrequired-http-headers
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte{'{', '}'})
 		return nil
@@ -160,6 +155,7 @@ func DeterminingSupport() http.Handler {
 
 // PullingBlobs to pull a blob.
 func PullingBlobs() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		dq := router.ParamFromContext(ctx, "digest")
@@ -170,63 +166,30 @@ func PullingBlobs() http.Handler {
 			)
 		}
 		name := router.ParamFromContext(ctx, "name")
-		dir := registry.PathJoinWithBase(name, dgst.String())
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return errors.Wrap(err,
-				errors.WithCodeBlobUnknown(),
-			)
-		}
-
-		fi, err := registry.PickupFileinfo(dir)
-		if err != nil {
-			return err
-		}
-		filename := fi.Name()
-		if strings.HasSuffix(filename, ".json") {
-			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("content-type", "application/octet-stream")
-		} else {
-			w.Header().Set("accept-ranges", "bytes")
-			w.Header().Set("content-type", "application/octet-stream")
-		}
-
-		path := filepath.Join(dir, filename)
-		f, err := os.Open(path)
+		f, err := s.FindBlobByImage(name, dgst.String())
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		io.Copy(w, f)
-		return nil
+		w.Header().Set("Content-Type", registry.PredictDockerContentType(f.Name()))
+		_, err = io.Copy(w, f)
+		return err
 	})
 }
 
 // PullingManifests to pull a manifest.
 func PullingManifests() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
-
-		manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
-		if _, err := os.Stat(manifest); os.IsNotExist(err) {
-			return errors.Wrap(err,
-				errors.WithCodeManifestUnknown(),
-			)
-		}
-
-		f, err := os.Open(manifest)
+		m, err := s.FindManifestByImage(name, tag)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-		io.Copy(w, f)
-		return nil
+		w.Header().Set("Content-Type", registry.PredictDockerContentType("manifest.json"))
+		return json.NewEncoder(w).Encode(m)
 	})
 }
 
@@ -237,8 +200,6 @@ func PushBlob() http.Handler {
 		name := router.ParamFromContext(r.Context(), "name")
 		location := "/v2/" + name + "/blobs/uploads/" + sessionID
 		w.Header().Set("Location", location)
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})
@@ -302,8 +263,6 @@ func PushBlobHead() http.Handler {
 		w.Header().Set("Content-Type", registry.PredictDockerContentType(fi.Name()))
 		w.Header().Set("Docker-Content-Digest", dgst.String())
 		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})

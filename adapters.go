@@ -27,3 +27,15 @@ func AccessLogServerAdapter() ServerAdapter {
 		})
 	}
 }
+
+func SetHeaderServerAdapter() ServerAdapter {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Important/Required HTTP-Headers
+			// https://docs.docker.com/registry/deploying/#importantrequired-http-headers
+			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
