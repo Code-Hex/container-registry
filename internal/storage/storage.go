@@ -30,6 +30,8 @@ type Repository interface {
 	DeleteBlobByImage(name, digest string) error
 }
 
+const baseTagDir = "tags"
+
 var _ Repository = (*Local)(nil)
 
 // Local implemented Repository using local storage.
@@ -94,7 +96,7 @@ func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*regist
 		)
 	}
 	// create directory
-	path := registry.PathJoinWithBase(name, tag)
+	path := registry.PathJoinWithBase(name, baseTagDir, tag)
 	os.MkdirAll(path, 0700)
 
 	// create manifest file onto it
@@ -132,7 +134,7 @@ func (l *Local) FindBlobByImage(name, digest string) (*os.File, error) {
 
 // FindManifestByImage finds manifest json file by image name and that's tag.
 func (l *Local) FindManifestByImage(name, ref string) (*registry.Manifest, error) {
-	manifest := registry.PathJoinWithBase(name, ref, "manifest.json")
+	manifest := registry.PathJoinWithBase(name, baseTagDir, ref, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return nil, errors.Wrap(err,
 			errors.WithCodeManifestUnknown(),
@@ -152,7 +154,7 @@ func (l *Local) FindManifestByImage(name, ref string) (*registry.Manifest, error
 
 // DeleteManifestByImage deletes manifest json file by image name and that's tag.
 func (l *Local) DeleteManifestByImage(name, tag string) error {
-	tagDir := registry.PathJoinWithBase(name, tag)
+	tagDir := registry.PathJoinWithBase(name, baseTagDir, tag)
 	manifest := filepath.Join(tagDir, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return errors.Wrap(err,
