@@ -29,7 +29,11 @@ jobs:
       run: docker tag $(docker images --format '{{.ID}}' --filter=reference='registry') codehex-local:5080/registry:latest
     - name: test push
       run: docker push codehex-local:5080/registry:latest
+    - name: test push (cached on the registry)
+      run: docker push codehex-local:5080/registry:latest
     - name: remove local image for testing pull
       run: docker rmi codehex-local:5080/registry:latest
     - name: test pull
+      run: docker pull codehex-local:5080/registry:latest
+    - name: test pull (cached on the local)
       run: docker pull codehex-local:5080/registry:latest
