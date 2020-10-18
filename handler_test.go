@@ -13,17 +13,17 @@ import (
 func TestResponse_WriteHeader(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := newResponse(w)
-	if r.statusCode != 0 {
-		t.Fatalf("want %q, but got %q", 0, r.statusCode)
-	}
-	r.WriteHeader(http.StatusOK)
 	if r.statusCode != http.StatusOK {
-		t.Fatalf("want %q, but got %q", http.StatusOK, r.statusCode)
+		t.Fatalf("want %d, but got %d", http.StatusOK, r.statusCode)
+	}
+	r.WriteHeader(http.StatusNotFound)
+	if r.statusCode != http.StatusNotFound {
+		t.Fatalf("want %q, but got %q", http.StatusNotFound, r.statusCode)
 	}
 	// ignore
 	r.WriteHeader(http.StatusInternalServerError)
-	if r.statusCode != http.StatusOK {
-		t.Fatalf("want %q, but got %q", http.StatusOK, r.statusCode)
+	if r.statusCode != http.StatusNotFound {
+		t.Fatalf("want %q, but got %q", http.StatusNotFound, r.statusCode)
 	}
 }
 
