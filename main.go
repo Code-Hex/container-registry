@@ -36,6 +36,11 @@ const (
 
 const hostname = "localhost:5080"
 
+var unsupportedHandler = Handler(func(w http.ResponseWriter, r *http.Request) error {
+	err := fmt.Errorf("unsupported")
+	return errors.Wrap(err, errors.WithCodeUnsupported())
+})
+
 // spec
 // https://github.com/opencontainers/distribution-spec/blob/master/spec.md
 func main() {
@@ -96,6 +101,7 @@ func main() {
 		PushBlobHead(),
 	)
 
+	// Group -- /v2/<name>/manifests/<reference>
 	rs.PUT(
 		fmt.Sprintf(
 			`/v2/{name:%s}/manifests/{tag:%s}`,
@@ -103,17 +109,34 @@ func main() {
 		),
 		PushManifestPut(),
 	)
+	rs.PUT(
+		fmt.Sprintf(
+			`/v2/{name:%s}/manifests/{digest:%s}`,
+			grammar.Name, grammar.Digest,
+		),
+		unsupportedHandler,
+	)
+	// Group End
 
 	// /?n=<integer>&last=<integer>
 	rs.Handle(GET, "/v2/:name/tags/list", nil)
 
+	// Group -- /v2/<name>/manifests/<reference>
 	rs.DELETE(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{reference:%s}`,
-			grammar.Name, grammar.Reference,
+			`/v2/{name:%s}/manifests/{tag:%s}`,
+			grammar.Name, grammar.Tag,
 		),
 		DeleteManifest(),
 	)
+	rs.DELETE(
+		fmt.Sprintf(
+			`/v2/{name:%s}/manifests/{digest:%s}`,
+			grammar.Name, grammar.Digest,
+		),
+		unsupportedHandler,
+	)
+	// Group End
 
 	rs.DELETE(
 		fmt.Sprintf(
@@ -349,8 +372,8 @@ func DeleteManifest() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		reference := router.ParamFromContext(ctx, "reference")
-		if err := s.DeleteManifestByImage(name, reference); err != nil {
+		tag := router.ParamFromContext(ctx, "tag")
+		if err := s.DeleteManifestByImage(name, tag); err != nil {
 			return err
 		}
 		w.WriteHeader(http.StatusAccepted)
