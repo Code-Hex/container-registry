@@ -56,7 +56,7 @@ func main() {
 	// /v2/:name/manifests/:reference
 	rs.GET(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{tag:%s}`,
+			`/v2/{name:%s}/manifests/{reference:%s}`,
 			grammar.Name, grammar.Reference,
 		),
 		PullingManifests(),
@@ -201,8 +201,8 @@ func PullingManifests() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		tag := router.ParamFromContext(ctx, "tag")
-		m, err := s.FindManifestByImage(name, tag)
+		ref := router.ParamFromContext(ctx, "reference")
+		m, err := s.FindManifestByImage(name, ref)
 		if err != nil {
 			return err
 		}

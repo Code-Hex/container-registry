@@ -23,7 +23,7 @@ type Repository interface {
 
 	// Pull
 	FindBlobByImage(name, digest string) (*os.File, error)
-	FindManifestByImage(name, tag string) (*registry.Manifest, error)
+	FindManifestByImage(name, ref string) (*registry.Manifest, error)
 
 	// Delete
 	DeleteManifestByImage(name, tag string) error
@@ -131,8 +131,8 @@ func (l *Local) FindBlobByImage(name, digest string) (*os.File, error) {
 }
 
 // FindManifestByImage finds manifest json file by image name and that's tag.
-func (l *Local) FindManifestByImage(name, tag string) (*registry.Manifest, error) {
-	manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
+func (l *Local) FindManifestByImage(name, ref string) (*registry.Manifest, error) {
+	manifest := registry.PathJoinWithBase(name, ref, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return nil, errors.Wrap(err,
 			errors.WithCodeManifestUnknown(),
