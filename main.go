@@ -109,8 +109,8 @@ func main() {
 
 	rs.DELETE(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{tag:%s}`,
-			grammar.Name, grammar.Tag,
+			`/v2/{name:%s}/manifests/{reference:%s}`,
+			grammar.Name, grammar.Reference,
 		),
 		DeleteManifest(),
 	)
@@ -349,11 +349,18 @@ func DeleteManifest() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		tag := router.ParamFromContext(ctx, "tag")
-		if err := s.DeleteManifestByImage(name, tag); err != nil {
+		reference := router.ParamFromContext(ctx, "reference")
+		if err := s.DeleteManifestByImage(name, reference); err != nil {
 			return err
 		}
 		w.WriteHeader(http.StatusAccepted)
+		return nil
+	})
+}
+
+func DeleteBlob() http.Handler {
+	_ = new(storage.Local)
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	})
 }
