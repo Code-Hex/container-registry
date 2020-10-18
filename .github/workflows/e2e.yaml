@@ -1,0 +1,39 @@
+name: e2e test
+on:
+  push:
+    branches:
+    - "master"
+  pull_request: {}
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+    - name: setup go
+      uses: actions/setup-go@v2
+    - name: build
+      run: make build
+    - name: run local registry
+      run: ./bin/registry &
+    - name: add host for test
+      run: sudo echo "127.0.0.1 codehex-local" | sudo tee -a /etc/hosts
+    - name: docker pull registry
+      run: docker pull registry:2
+    - name: tagging image for test
+      run: docker tag $(docker images --format '{{.ID}}' --filter=reference='registry') codehex-local:5080/registry:latest
+    - name: test push
+      run: docker push codehex-local:5080/registry:latest
+    - name: test push (cached on the registry)
+      run: docker push codehex-local:5080/registry:latest
+    - name: remove local image for testing pull
+      run: docker rmi codehex-local:5080/registry:latest
+    - name: test pull
+      run: docker pull codehex-local:5080/registry:latest
+    - name: test pull (cached on the local)
+      run: docker pull codehex-local:5080/registry:latest
