@@ -1,3 +1,5 @@
 testdata/*
 !testdata/.gitkeep
 .DS_Store
+bin/*
+!bin/.gitkeep
