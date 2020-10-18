@@ -237,7 +237,7 @@ func PushBlobPatch() http.Handler {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		sessionID := router.ParamFromContext(ctx, "reference")
-		size, err := s.PutBlobBySession(sessionID, name, r.Body)
+		size, err := s.PutBlobByReference(sessionID, name, r.Body)
 		if err != nil {
 			return err
 		}
@@ -272,7 +272,7 @@ func PushBlobPut() http.Handler {
 		// https://github.com/opencontainers/distribution-spec/blob/master/spec.md#pushing-a-blob-monolithically
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "application/octet-stream" {
-			_, err := s.PutBlobBySession(sessionID, name, r.Body)
+			_, err := s.PutBlobByReference(dgst.String(), name, r.Body)
 			if err != nil {
 				return err
 			}

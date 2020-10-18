@@ -16,7 +16,7 @@ import (
 type Repository interface {
 	// Push
 	IssueSession() string
-	PutBlobBySession(sessionID string, imgName string, body io.Reader) (int64, error)
+	PutBlobByReference(ref string, imgName string, body io.Reader) (int64, error)
 	EnsurePutBlobBySession(sessionID string, imgName string, digest string) error
 	CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error)
 	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error)
@@ -40,12 +40,12 @@ func (l *Local) IssueSession() string {
 	return uuid.New().String()
 }
 
-// PutBlobBySession tries to put uploaded file on the sessionID directory.
+// PutBlobByReference tries to put uploaded file on the reference directory.
 //
-// first, this method creates directory like "testdata/<image-name>/<session-id>"
+// first, this method creates directory like "testdata/<image-name>/<reference>"
 // then, put the layer file onto it.
-func (l *Local) PutBlobBySession(sessionID string, imgName string, body io.Reader) (int64, error) {
-	path := registry.PathJoinWithBase(imgName, sessionID)
+func (l *Local) PutBlobByReference(ref string, imgName string, body io.Reader) (int64, error) {
+	path := registry.PathJoinWithBase(imgName, ref)
 	os.MkdirAll(path, 0700)
 	return registry.CreateLayer(body, path)
 }
