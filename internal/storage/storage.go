@@ -18,13 +18,19 @@ type Repository interface {
 	IssueSession() string
 	PutBlobBySession(sessionID string, imgName string, body io.Reader) (int64, error)
 	EnsurePutBlobBySession(sessionID string, imgName string, digest string) error
-	CheckBlobByDigest(digest string) (string, error)
+	CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error)
 	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error)
 
 	// Pull
 	FindBlobByImage(name, digest string) (*os.File, error)
 	FindManifestByImage(name, tag string) (*registry.Manifest, error)
+
+	// Delete
+	DeleteManifestByImage(name, tag string) error
+	DeleteBlobByImage(name, digest string) error
 }
+
+var _ Repository = (*Local)(nil)
 
 // Local implemented Repository using local storage.
 type Local struct{}
@@ -124,7 +130,7 @@ func (l *Local) FindBlobByImage(name, digest string) (*os.File, error) {
 	return os.Open(path)
 }
 
-// FindManifestByImage finds manifest json file by image name and that's digest.
+// FindManifestByImage finds manifest json file by image name and that's tag.
 func (l *Local) FindManifestByImage(name, tag string) (*registry.Manifest, error) {
 	manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
@@ -142,4 +148,29 @@ func (l *Local) FindManifestByImage(name, tag string) (*registry.Manifest, error
 		return nil, err
 	}
 	return &m, nil
+}
+
+// DeleteManifestByImage deletes manifest json file by image name and that's tag.
+func (l *Local) DeleteManifestByImage(name, tag string) error {
+	tagDir := registry.PathJoinWithBase(name, tag)
+	manifest := filepath.Join(tagDir, "manifest.json")
+	if _, err := os.Stat(manifest); os.IsNotExist(err) {
+		return errors.Wrap(err,
+			errors.WithStatusCode(http.StatusBadRequest),
+		)
+	}
+	return os.RemoveAll(tagDir)
+}
+
+// DeleteBlobByImage deletes blob by docker image name and that's digest.
+//
+// digest format is like <digest-alg>:<digest>. see grammar.Digest
+func (l *Local) DeleteBlobByImage(name, digest string) error {
+	dir := registry.PathJoinWithBase(name, digest)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return errors.Wrap(err,
+			errors.WithCodeBlobUnknown(),
+		)
+	}
+	return os.RemoveAll(dir)
 }
