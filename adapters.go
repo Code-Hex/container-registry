@@ -21,8 +21,9 @@ func ServerApply(h http.Handler, adapters ...ServerAdapter) http.Handler {
 func AccessLogServerAdapter() ServerAdapter {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			log.Println(r.Method, r.URL.String())
-			next.ServeHTTP(w, r)
+			wrapped := newResponse(w)
+			next.ServeHTTP(wrapped, r)
+			log.Println(r.Method, wrapped.statusCode, r.URL.String())
 		})
 	}
 }

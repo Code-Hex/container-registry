@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Code-Hex/container-registry/internal/errors"
 	"github.com/Code-Hex/container-registry/internal/grammar"
 	"github.com/Code-Hex/container-registry/internal/registry"
 	"github.com/Code-Hex/go-router-simple"
@@ -157,50 +158,39 @@ func main() {
 // If the response is 200 OK, then the registry implements this specification.
 // This endpoint MAY be used for authentication/authorization purposes, but this is out of the purview of this specification.
 func DeterminingSupport() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		// Important/Required HTTP-Headers
 		// https://docs.docker.com/registry/deploying/#importantrequired-http-headers
 		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte{'{', '}'})
+		return nil
 	})
 }
 
 // PullingBlobs to pull a blob.
 func PullingBlobs() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		dq := router.ParamFromContext(ctx, "digest")
 		dgst, err := digest.Parse(dq)
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return errors.Wrap(err,
+				errors.WithCodeDigestInvalid(),
+			)
 		}
 		name := router.ParamFromContext(ctx, "name")
 		dir := registry.PathJoinWithBase(name, dgst.String())
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			writeErrorResponse(w,
-				http.StatusNotFound,
-				&ErrorResponse{
-					Errors: []Error{
-						{
-							"BLOB_UNKNOWN",
-							"blob unknown to registry",
-							dgst.String(),
-						},
-					},
-				},
+			return errors.Wrap(err,
+				errors.WithCodeBlobUnknown(),
 			)
-			return
 		}
 
 		fi, err := registry.PickupFileinfo(dir)
 		if err != nil {
-			log.Printf("unexpected directory: %q, err: %v", dir, err)
-			w.WriteHeader(http.StatusPreconditionFailed)
-			return
+			return err
 		}
 		filename := fi.Name()
 		if strings.HasSuffix(filename, ".json") {
@@ -215,44 +205,31 @@ func PullingBlobs() http.Handler {
 		path := filepath.Join(dir, filename)
 		f, err := os.Open(path)
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return err
 		}
 		defer f.Close()
 		io.Copy(w, f)
+		return nil
 	})
 }
 
 // PullingManifests to pull a manifest.
 func PullingManifests() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
 
 		manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
 		if _, err := os.Stat(manifest); os.IsNotExist(err) {
-			writeErrorResponse(w,
-				http.StatusNotFound,
-				&ErrorResponse{
-					Errors: []Error{
-						{
-							"MANIFEST_UNKNOWN",
-							"manifest unknown",
-							tag,
-						},
-					},
-				},
+			return errors.Wrap(err,
+				errors.WithCodeManifestUnknown(),
 			)
-			return
 		}
 
 		f, err := os.Open(manifest)
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return err
 		}
 		defer f.Close()
 
@@ -260,11 +237,12 @@ func PullingManifests() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 		io.Copy(w, f)
+		return nil
 	})
 }
 
 func PushBlob() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 
 		uuid := uuid.New().String()
 		name := router.ParamFromContext(r.Context(), "name")
@@ -275,11 +253,12 @@ func PushBlob() http.Handler {
 		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusAccepted)
+		return nil
 	})
 }
 
 func PushBlobPatch() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		reference := router.ParamFromContext(ctx, "reference")
@@ -289,9 +268,7 @@ func PushBlobPatch() http.Handler {
 
 		size, err := registry.CreateLayer(r.Body, path)
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return err
 		}
 
 		location := "/v2/" + name + "/blobs/uploads/" + reference
@@ -299,16 +276,17 @@ func PushBlobPatch() http.Handler {
 		w.Header().Set("Docker-Upload-UUID", reference)
 		w.Header().Set("Range", fmt.Sprintf("0-%d", size))
 		w.WriteHeader(http.StatusAccepted)
+		return nil
 	})
 }
 
 func PushBlobPut() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		dgst, err := digest.Parse(r.URL.Query().Get("digest"))
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return errors.Wrap(err,
+				errors.WithCodeDigestInvalid(),
+			)
 		}
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
@@ -320,46 +298,42 @@ func PushBlobPut() http.Handler {
 		oldDir := registry.PathJoinWithBase(name, uuid)
 		fi, err := registry.PickupFileinfo(oldDir)
 		if err != nil {
-			log.Printf("unexpected directory: %q, err: %v", oldDir, err)
-			w.WriteHeader(http.StatusPreconditionFailed)
-			return
+			return err
 		}
 		filename := fi.Name()
 
 		oldpath := filepath.Join(oldDir, filename)
 		newpath := filepath.Join(newDir, filename)
 		if err := os.Rename(oldpath, newpath); err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return err
 		}
 		os.Remove(oldDir)
 
 		w.WriteHeader(http.StatusCreated)
+		return nil
 	})
 }
 
 func PushBlobHead() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		dq := router.ParamFromContext(ctx, "digest")
 		dgst, err := digest.Parse(dq)
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return errors.Wrap(err,
+				errors.WithCodeDigestInvalid(),
+			)
 		}
 		name := router.ParamFromContext(ctx, "name")
 		dir := registry.PathJoinWithBase(name, dgst.String())
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			w.WriteHeader(http.StatusNotFound)
-			return
+			return errors.Wrap(err,
+				errors.WithStatusCode(http.StatusNotFound),
+			)
 		}
 		fi, err := registry.PickupFileinfo(dir)
 		if err != nil {
-			log.Printf("unexpected directory: %q, err: %v", dir, err)
-			w.WriteHeader(http.StatusPreconditionFailed)
-			return
+			return err
 		}
 		filename := fi.Name()
 		size := fi.Size()
@@ -374,17 +348,18 @@ func PushBlobHead() http.Handler {
 		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusAccepted)
+		return nil
 	})
 }
 
 func PushManifestPut() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		var m Manifest
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return errors.Wrap(err,
+				errors.WithCodeManifestInvalid(),
+			)
 		}
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
@@ -393,17 +368,16 @@ func PushManifestPut() http.Handler {
 		path = filepath.Join(path, "manifest.json")
 		f, err := os.Create(path)
 		if err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return errors.Wrap(err,
+				errors.WithCodeTagInvalid(),
+			)
 		}
 		defer f.Close()
 		if err := json.NewEncoder(f).Encode(&m); err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return err
 		}
 		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
 		w.WriteHeader(http.StatusCreated)
+		return nil
 	})
 }
