@@ -1,0 +1,25 @@
+name: test
+on:
+  push:
+    branches:
+    - "master"
+  pull_request: {}
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+    - name: setup go
+      uses: actions/setup-go@v2
+    - name: build
+      run: make build
+    - name: docker pull registry
+      run: docker pull registry:2
+    - name: list images
+      run: docker images --format '{{.ID}}'
