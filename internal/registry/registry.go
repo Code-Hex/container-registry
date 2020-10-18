@@ -9,7 +9,17 @@ import (
 	"path/filepath"
 
 	"github.com/h2non/filetype"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
+
+// Manifest represents manifest schema v2.
+// https://docs.docker.com/registry/spec/manifest-v2-2/
+type Manifest struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	MediaType     string               `json:"mediaType"`
+	Config        ocispec.Descriptor   `json:"config"`
+	Layers        []ocispec.Descriptor `json:"layers"`
+}
 
 // BasePath represents base path for this application.
 var BasePath = "testdata"
@@ -64,4 +74,13 @@ func PickupFileinfo(dir string) (os.FileInfo, error) {
 		return nil, fmt.Errorf("there is no file in %q directory", dir)
 	}
 	return fis[0], nil
+}
+
+// PredictDockerContentType predicts content type by filename.
+func PredictDockerContentType(filename string) string {
+	ext := filepath.Ext(filename)
+	if ext == ".json" {
+		return "application/vnd.docker.distribution.manifest.v2+json"
+	}
+	return "application/vnd.docker.image.rootfs.diff.tar.gzip"
 }

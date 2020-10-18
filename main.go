@@ -10,18 +10,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/Code-Hex/container-registry/internal/errors"
 	"github.com/Code-Hex/container-registry/internal/grammar"
 	"github.com/Code-Hex/container-registry/internal/registry"
+	"github.com/Code-Hex/container-registry/internal/storage"
 	"github.com/Code-Hex/go-router-simple"
-	"github.com/google/uuid"
 	digest "github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const (
@@ -36,15 +33,6 @@ const (
 	// DELETE represents DELETE method
 	DELETE = http.MethodDelete
 )
-
-// Manifest represents manifest schema v2.
-// https://docs.docker.com/registry/spec/manifest-v2-2/
-type Manifest struct {
-	SchemaVersion int                  `json:"schemaVersion"`
-	MediaType     string               `json:"mediaType"`
-	Config        ocispec.Descriptor   `json:"config"`
-	Layers        []ocispec.Descriptor `json:"layers"`
-}
 
 const hostname = "localhost:5080"
 
@@ -80,7 +68,7 @@ func main() {
 			`/v2/{name:%s}/blobs/uploads/`,
 			grammar.Name,
 		),
-		PushBlob(),
+		PushBlobPost(),
 	)
 
 	rs.PATCH(
@@ -124,7 +112,7 @@ func main() {
 	rs.Handle(DELETE, "/v2/:name/blobs/:digest", nil)
 
 	srv := &http.Server{
-		Handler: ServerApply(rs, AccessLogServerAdapter()),
+		Handler: ServerApply(rs, AccessLogServerAdapter(), SetHeaderServerAdapter()),
 	}
 	errCh := make(chan struct{})
 	go func() {
@@ -159,10 +147,6 @@ func main() {
 // This endpoint MAY be used for authentication/authorization purposes, but this is out of the purview of this specification.
 func DeterminingSupport() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
-		// Important/Required HTTP-Headers
-		// https://docs.docker.com/registry/deploying/#importantrequired-http-headers
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte{'{', '}'})
 		return nil
@@ -170,7 +154,11 @@ func DeterminingSupport() http.Handler {
 }
 
 // PullingBlobs to pull a blob.
+//
+// To pull a blob, perform a GET request to a url in the following form: /v2/<name>/blobs/<digest>
+// <name> is the namespace of the repository, and <digest> is the blob's digest.
 func PullingBlobs() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		dq := router.ParamFromContext(ctx, "digest")
@@ -181,106 +169,83 @@ func PullingBlobs() http.Handler {
 			)
 		}
 		name := router.ParamFromContext(ctx, "name")
-		dir := registry.PathJoinWithBase(name, dgst.String())
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return errors.Wrap(err,
-				errors.WithCodeBlobUnknown(),
-			)
-		}
-
-		fi, err := registry.PickupFileinfo(dir)
-		if err != nil {
-			return err
-		}
-		filename := fi.Name()
-		if strings.HasSuffix(filename, ".json") {
-			w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("content-type", "application/octet-stream")
-		} else {
-			w.Header().Set("accept-ranges", "bytes")
-			w.Header().Set("content-type", "application/octet-stream")
-		}
-
-		path := filepath.Join(dir, filename)
-		f, err := os.Open(path)
+		f, err := s.FindBlobByImage(name, dgst.String())
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		io.Copy(w, f)
-		return nil
+		w.Header().Set("Content-Type", registry.PredictDockerContentType(f.Name()))
+		_, err = io.Copy(w, f)
+		return err
 	})
 }
 
 // PullingManifests to pull a manifest.
+//
+// To pull a manifest, perform a GET request to a url in the following form: /v2/<name>/manifests/<reference>
+// <name> refers to the namespace of the repository. <reference> is a tag name.
 func PullingManifests() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
-
-		manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
-		if _, err := os.Stat(manifest); os.IsNotExist(err) {
-			return errors.Wrap(err,
-				errors.WithCodeManifestUnknown(),
-			)
-		}
-
-		f, err := os.Open(manifest)
+		m, err := s.FindManifestByImage(name, tag)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-		io.Copy(w, f)
-		return nil
+		w.Header().Set("Content-Type", registry.PredictDockerContentType("manifest.json"))
+		return json.NewEncoder(w).Encode(m)
 	})
 }
 
-func PushBlob() http.Handler {
+// PushBlobPost a handler to push a blob. this handler issues session ID to push image.
+//
+// To push a blob monolithically by using a single POST request, perform a POST request to a URL in the following form: /v2/<name>/blobs/uploads
+// <name> refers to the namespace of the repository.
+func PushBlobPost() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
-
-		uuid := uuid.New().String()
+		log.Println(r.Form)
+		sessionID := s.IssueSession()
 		name := router.ParamFromContext(r.Context(), "name")
-		os.MkdirAll(registry.PathJoinWithBase(name), 0700)
-		location := "/v2/" + name + "/blobs/uploads/" + uuid
-		//log.Println(location)
+		location := "/v2/" + name + "/blobs/uploads/" + sessionID
 		w.Header().Set("Location", location)
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})
 }
 
+// PushBlobPatch a handler to push a blob. this handler accepts image body and put to storage by session ID.
+//
+// perform a PATCH request to a URL in the following form: /v2/<name>/blobs/uploads/<reference>
+// <name> refers to the namespace of the repository, <reference> will be session ID.
 func PushBlobPatch() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		reference := router.ParamFromContext(ctx, "reference")
-
-		path := registry.PathJoinWithBase(name, reference)
-		os.MkdirAll(path, 0700)
-
-		size, err := registry.CreateLayer(r.Body, path)
+		sessionID := router.ParamFromContext(ctx, "reference")
+		size, err := s.PutBlobBySession(sessionID, name, r.Body)
 		if err != nil {
 			return err
 		}
-
-		location := "/v2/" + name + "/blobs/uploads/" + reference
+		location := "/v2/" + name + "/blobs/uploads/" + sessionID
 		w.Header().Set("Location", location)
-		w.Header().Set("Docker-Upload-UUID", reference)
+		w.Header().Set("Docker-Upload-UUID", sessionID)
 		w.Header().Set("Range", fmt.Sprintf("0-%d", size))
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})
 }
 
+// PushBlobPut a handler to push a blob. this handler moves image to ensured storage
+// from has been put to storage by session ID before.
+//
+// perform a PUT request to a URL in the following form: /v2/<name>/blobs/uploads/<reference>?digest=<digest>
+// <name> refers to the namespace of the repository, <reference> will be session ID. <digest> is digest.
 func PushBlobPut() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		dgst, err := digest.Parse(r.URL.Query().Get("digest"))
 		if err != nil {
@@ -290,31 +255,21 @@ func PushBlobPut() http.Handler {
 		}
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		newDir := registry.PathJoinWithBase(name, dgst.String())
-		os.MkdirAll(newDir, 0700)
-
-		reference := router.ParamFromContext(ctx, "reference")
-		uuid := reference
-		oldDir := registry.PathJoinWithBase(name, uuid)
-		fi, err := registry.PickupFileinfo(oldDir)
-		if err != nil {
+		sessionID := router.ParamFromContext(ctx, "reference")
+		if err := s.EnsurePutBlobBySession(sessionID, name, dgst.String()); err != nil {
 			return err
 		}
-		filename := fi.Name()
-
-		oldpath := filepath.Join(oldDir, filename)
-		newpath := filepath.Join(newDir, filename)
-		if err := os.Rename(oldpath, newpath); err != nil {
-			return err
-		}
-		os.Remove(oldDir)
-
 		w.WriteHeader(http.StatusCreated)
 		return nil
 	})
 }
 
+// PushBlobHead a handler to push a blob. this handler checks image is pushed completely.
+//
+// perform a HEAD request to a URL in the following form: /v2/<name>/blobs/<digest>
+// <name> refers to the namespace of the repository, <digest> is digest.
 func PushBlobHead() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		dq := router.ParamFromContext(ctx, "digest")
@@ -325,55 +280,30 @@ func PushBlobHead() http.Handler {
 			)
 		}
 		name := router.ParamFromContext(ctx, "name")
-		dir := registry.PathJoinWithBase(name, dgst.String())
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return errors.Wrap(err,
-				errors.WithStatusCode(http.StatusNotFound),
-			)
-		}
-		fi, err := registry.PickupFileinfo(dir)
+		fi, err := s.CheckBlobByDigest(name, dgst.String())
 		if err != nil {
 			return err
 		}
-		filename := fi.Name()
-		size := fi.Size()
-		ext := filepath.Ext(filename)
-		if ext == ".json" {
-			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-		} else {
-			w.Header().Set("Content-Type", "application/vnd.docker.image.rootfs.diff.tar.gzip")
-		}
+		w.Header().Set("Content-Type", registry.PredictDockerContentType(fi.Name()))
 		w.Header().Set("Docker-Content-Digest", dgst.String())
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})
 }
 
+// PushManifestPut a handler to push a manifest json file.
+//
+// perform a PUT request to a URL in the following form: /v2/<name>/manifests/<reference>
+// <name> refers to the namespace of the repository. <reference> is a tag name.
 func PushManifestPut() http.Handler {
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
-		var m Manifest
-		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			return errors.Wrap(err,
-				errors.WithCodeManifestInvalid(),
-			)
-		}
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
-		path := registry.PathJoinWithBase(name, tag)
-		os.MkdirAll(path, 0700)
-		path = filepath.Join(path, "manifest.json")
-		f, err := os.Create(path)
+		m, err := s.CreateManifest(r.Body, name, tag)
 		if err != nil {
-			return errors.Wrap(err,
-				errors.WithCodeTagInvalid(),
-			)
-		}
-		defer f.Close()
-		if err := json.NewEncoder(f).Encode(&m); err != nil {
 			return err
 		}
 		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())

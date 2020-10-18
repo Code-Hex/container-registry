@@ -141,3 +141,29 @@ func TestPickupFileinfo(t *testing.T) {
 		})
 	}
 }
+
+func TestPredictContentType(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		want     string
+	}{
+		{
+			name:     "want json",
+			filename: "file.json",
+			want:     "application/vnd.docker.distribution.manifest.v2+json",
+		},
+		{
+			name:     "want gzip",
+			filename: "file.tar.gz",
+			want:     "application/vnd.docker.image.rootfs.diff.tar.gzip",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := registry.PredictDockerContentType(tt.filename); got != tt.want {
+				t.Errorf("PredictContentType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
