@@ -119,7 +119,13 @@ func main() {
 	// Group End
 
 	// /?n=<integer>&last=<integer>
-	rs.Handle(GET, "/v2/:name/tags/list", nil)
+	rs.GET(
+		fmt.Sprintf(
+			"/v2/{name:%s}/tags/list",
+			grammar.Name,
+		),
+		ListTags(),
+	)
 
 	// Group -- /v2/<name>/manifests/<reference>
 	rs.DELETE(
@@ -396,5 +402,30 @@ func DeleteBlob() http.Handler {
 		}
 		w.WriteHeader(http.StatusAccepted)
 		return nil
+	})
+}
+
+// ListTags a handler to list tags.
+//
+// perform a GET request to a path in the following format: /v2/<name>/tags/list
+// <name> is the namespace of the repository.
+func ListTags() http.Handler {
+	type Tags struct {
+		Name string   `json:"name"`
+		Tags []string `json:"tags"`
+	}
+	s := new(storage.Local)
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
+		ctx := r.Context()
+		name := router.ParamFromContext(ctx, "name")
+		tags, err := s.ListTags(name)
+		if err != nil {
+			return err
+		}
+		resp := &Tags{
+			Name: name,
+			Tags: tags,
+		}
+		return json.NewEncoder(w).Encode(resp)
 	})
 }

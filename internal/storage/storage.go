@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -175,4 +176,23 @@ func (l *Local) DeleteBlobByImage(name, digest string) error {
 		)
 	}
 	return os.RemoveAll(dir)
+}
+
+// ListTags lists tags by image name.
+func (l *Local) ListTags(name string) ([]string, error) {
+	path := registry.PathJoinWithBase(name, baseTagDir)
+	fis, err := ioutil.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.Wrap(err,
+				errors.WithStatusCode(http.StatusNotFound),
+			)
+		}
+		return nil, err
+	}
+	tags := make([]string, len(fis))
+	for i, tag := range fis {
+		tags[i] = tag.Name()
+	}
+	return tags, nil
 }
