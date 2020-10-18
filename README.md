@@ -1,4 +1,4 @@
-![test](https://github.com/Code-Hex/container-registry/workflows/test/badge.svg)
+![test](https://github.com/Code-Hex/container-registry/workflows/test/badge.svg) ![e2e test](https://github.com/Code-Hex/container-registry/workflows/e2e%20test/badge.svg)
 
 ## Pull
 
