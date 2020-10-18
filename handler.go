@@ -11,11 +11,13 @@ import (
 type Response struct {
 	http.ResponseWriter
 	statusCode int
+	committed  bool
 }
 
 func newResponse(w http.ResponseWriter) *Response {
 	return &Response{
 		ResponseWriter: w,
+		statusCode:     http.StatusOK,
 	}
 }
 
@@ -24,9 +26,10 @@ var _ http.ResponseWriter = (*Response)(nil)
 // WriteHeader wraps http.ResponseWriter.WriteHeader and
 // store status code which is written.
 func (r *Response) WriteHeader(statusCode int) {
-	if r.statusCode != 0 {
+	if r.committed {
 		return
 	}
+	r.committed = true
 	r.statusCode = statusCode
 	r.ResponseWriter.WriteHeader(r.statusCode)
 }
@@ -39,6 +42,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		return
 	}
+	log.Println("error:", err)
 	if err := errors.ServeJSON(w, err); err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
