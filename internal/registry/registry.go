@@ -65,3 +65,12 @@ func PickupFileinfo(dir string) (os.FileInfo, error) {
 	}
 	return fis[0], nil
 }
+
+// PredictDockerContentType predicts content type by filename.
+func PredictDockerContentType(filename string) string {
+	ext := filepath.Ext(filename)
+	if ext == ".json" {
+		return "application/vnd.docker.distribution.manifest.v2+json"
+	}
+	return "application/vnd.docker.image.rootfs.diff.tar.gzip"
+}
