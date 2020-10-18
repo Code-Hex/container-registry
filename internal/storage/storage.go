@@ -27,6 +27,7 @@ type Repository interface {
 
 	// Delete
 	DeleteManifestByImage(name, tag string) error
+	DeleteBlobByImage(name, digest string) error
 }
 
 var _ Repository = (*Local)(nil)
@@ -159,4 +160,17 @@ func (l *Local) DeleteManifestByImage(name, tag string) error {
 		)
 	}
 	return os.RemoveAll(tagDir)
+}
+
+// DeleteBlobByImage deletes blob by docker image name and that's digest.
+//
+// digest format is like <digest-alg>:<digest>. see grammar.Digest
+func (l *Local) DeleteBlobByImage(name, digest string) error {
+	dir := registry.PathJoinWithBase(name, digest)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return errors.Wrap(err,
+			errors.WithCodeBlobUnknown(),
+		)
+	}
+	return os.RemoveAll(dir)
 }

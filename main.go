@@ -120,7 +120,7 @@ func main() {
 			"/v2/{name:%s}/blobs/{digest:%s}",
 			grammar.Name, grammar.Digest,
 		),
-		nil,
+		DeleteBlob(),
 	)
 
 	srv := &http.Server{
@@ -358,9 +358,20 @@ func DeleteManifest() http.Handler {
 	})
 }
 
+// DeleteBlob a handler to delete a blob.
+//
+// perform a DELETE request to a URL in the following form: /v2/<name>/blobs/<digest>
+// <name> refers to the namespace of the repository, <digest> is digest.
 func DeleteBlob() http.Handler {
-	_ = new(storage.Local)
+	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
+		ctx := r.Context()
+		name := router.ParamFromContext(ctx, "name")
+		digest := router.ParamFromContext(ctx, "digest")
+		if err := s.DeleteBlobByImage(name, digest); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})
 }
