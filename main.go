@@ -68,7 +68,7 @@ func main() {
 			`/v2/{name:%s}/blobs/uploads/`,
 			grammar.Name,
 		),
-		PushBlob(),
+		PushBlobPost(),
 	)
 
 	rs.PATCH(
@@ -154,6 +154,9 @@ func DeterminingSupport() http.Handler {
 }
 
 // PullingBlobs to pull a blob.
+//
+// To pull a blob, perform a GET request to a url in the following form: /v2/<name>/blobs/<digest>
+// <name> is the namespace of the repository, and <digest> is the blob's digest.
 func PullingBlobs() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
@@ -178,6 +181,9 @@ func PullingBlobs() http.Handler {
 }
 
 // PullingManifests to pull a manifest.
+//
+// To pull a manifest, perform a GET request to a url in the following form: /v2/<name>/manifests/<reference>
+// <name> refers to the namespace of the repository. <reference> is a tag name.
 func PullingManifests() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
@@ -193,9 +199,14 @@ func PullingManifests() http.Handler {
 	})
 }
 
-func PushBlob() http.Handler {
+// PushBlobPost a handler to push a blob. this handler issues session ID to push image.
+//
+// To push a blob monolithically by using a single POST request, perform a POST request to a URL in the following form: /v2/<name>/blobs/uploads
+// <name> refers to the namespace of the repository.
+func PushBlobPost() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
+		log.Println(r.Form)
 		sessionID := s.IssueSession()
 		name := router.ParamFromContext(r.Context(), "name")
 		location := "/v2/" + name + "/blobs/uploads/" + sessionID
@@ -205,6 +216,10 @@ func PushBlob() http.Handler {
 	})
 }
 
+// PushBlobPatch a handler to push a blob. this handler accepts image body and put to storage by session ID.
+//
+// perform a PATCH request to a URL in the following form: /v2/<name>/blobs/uploads/<reference>
+// <name> refers to the namespace of the repository, <reference> will be session ID.
 func PushBlobPatch() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
@@ -224,6 +239,11 @@ func PushBlobPatch() http.Handler {
 	})
 }
 
+// PushBlobPut a handler to push a blob. this handler moves image to ensured storage
+// from has been put to storage by session ID before.
+//
+// perform a PUT request to a URL in the following form: /v2/<name>/blobs/uploads/<reference>?digest=<digest>
+// <name> refers to the namespace of the repository, <reference> will be session ID. <digest> is digest.
 func PushBlobPut() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
@@ -244,6 +264,10 @@ func PushBlobPut() http.Handler {
 	})
 }
 
+// PushBlobHead a handler to push a blob. this handler checks image is pushed completely.
+//
+// perform a HEAD request to a URL in the following form: /v2/<name>/blobs/<digest>
+// <name> refers to the namespace of the repository, <digest> is digest.
 func PushBlobHead() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
@@ -268,6 +292,10 @@ func PushBlobHead() http.Handler {
 	})
 }
 
+// PushManifestPut a handler to push a manifest json file.
+//
+// perform a PUT request to a URL in the following form: /v2/<name>/manifests/<reference>
+// <name> refers to the namespace of the repository. <reference> is a tag name.
 func PushManifestPut() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
