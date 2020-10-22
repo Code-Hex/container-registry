@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -90,26 +92,44 @@ func (l *Local) CheckBlobByDigest(imgName string, digest string) (os.FileInfo, e
 //
 // this method creates to "<image-name>/<tag>/manifest.json"
 func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error) {
+	hash := sha256.New()
+	reader := io.TeeReader(body, hash)
 	var m registry.Manifest
-	if err := json.NewDecoder(body).Decode(&m); err != nil {
+	if err := json.NewDecoder(reader).Decode(&m); err != nil {
 		return nil, errors.Wrap(err,
 			errors.WithCodeManifestInvalid(),
 		)
 	}
+	sha256sum := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+
 	// create directory
-	path := registry.PathJoinWithBase(name, baseTagDir, tag)
+	path := registry.PathJoinWithBase(name, baseTagDir)
 	os.MkdirAll(path, 0700)
 
-	// create manifest file onto it
-	path = filepath.Join(path, "manifest.json")
-	f, err := os.Create(path)
+	// create tag file
+	tagPath := filepath.Join(path, tag)
+	tagFile, err := os.Create(tagPath)
 	if err != nil {
 		return nil, errors.Wrap(err,
 			errors.WithCodeTagInvalid(),
 		)
 	}
-	defer f.Close()
-	if err := json.NewEncoder(f).Encode(&m); err != nil {
+	tagFile.Write([]byte(sha256sum))
+	tagFile.Close()
+
+	manifestPath := registry.PathJoinWithBase(name, sha256sum)
+	os.MkdirAll(manifestPath, 0700)
+
+	// create manifest file onto it
+	manifestPath = filepath.Join(manifestPath, "manifest.json")
+	manifestF, err := os.Create(manifestPath)
+	if err != nil {
+		return nil, errors.Wrap(err,
+			errors.WithCodeTagInvalid(),
+		)
+	}
+	defer manifestF.Close()
+	if err := json.NewEncoder(manifestF).Encode(&m); err != nil {
 		return nil, err
 	}
 	return &m, nil
@@ -135,7 +155,16 @@ func (l *Local) FindBlobByImage(name, digest string) (*os.File, error) {
 
 // FindManifestByImage finds manifest json file by image name and that's tag.
 func (l *Local) FindManifestByImage(name, ref string) (*registry.Manifest, error) {
-	manifest := registry.PathJoinWithBase(name, baseTagDir, ref, "manifest.json")
+	tagFilePath := registry.PathJoinWithBase(name, baseTagDir, ref)
+	if _, err := os.Stat(tagFilePath); err == nil {
+		digest, err := ioutil.ReadFile(tagFilePath)
+		if err != nil {
+			return nil, errors.Wrap(err)
+		}
+		ref = string(digest)
+	}
+
+	manifest := registry.PathJoinWithBase(name, ref, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return nil, errors.Wrap(err,
 			errors.WithCodeManifestUnknown(),
