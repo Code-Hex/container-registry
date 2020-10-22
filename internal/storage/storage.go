@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,19 +19,21 @@ import (
 type Repository interface {
 	// Push
 	IssueSession() string
-	PutBlobBySession(sessionID string, imgName string, body io.Reader) (int64, error)
+	PutBlobByReference(ref string, imgName string, body io.Reader) (int64, error)
 	EnsurePutBlobBySession(sessionID string, imgName string, digest string) error
 	CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error)
 	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error)
 
 	// Pull
 	FindBlobByImage(name, digest string) (*os.File, error)
-	FindManifestByImage(name, tag string) (*registry.Manifest, error)
+	FindManifestByImage(name, ref string) (*registry.Manifest, error)
 
 	// Delete
 	DeleteManifestByImage(name, tag string) error
 	DeleteBlobByImage(name, digest string) error
 }
+
+const baseTagDir = "tags"
 
 var _ Repository = (*Local)(nil)
 
@@ -40,12 +45,12 @@ func (l *Local) IssueSession() string {
 	return uuid.New().String()
 }
 
-// PutBlobBySession tries to put uploaded file on the sessionID directory.
+// PutBlobByReference tries to put uploaded file on the reference directory.
 //
-// first, this method creates directory like "testdata/<image-name>/<session-id>"
+// first, this method creates directory like "testdata/<image-name>/<reference>"
 // then, put the layer file onto it.
-func (l *Local) PutBlobBySession(sessionID string, imgName string, body io.Reader) (int64, error) {
-	path := registry.PathJoinWithBase(imgName, sessionID)
+func (l *Local) PutBlobByReference(ref string, imgName string, body io.Reader) (int64, error) {
+	path := registry.PathJoinWithBase(imgName, ref)
 	os.MkdirAll(path, 0700)
 	return registry.CreateLayer(body, path)
 }
@@ -87,26 +92,44 @@ func (l *Local) CheckBlobByDigest(imgName string, digest string) (os.FileInfo, e
 //
 // this method creates to "<image-name>/<tag>/manifest.json"
 func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error) {
+	hash := sha256.New()
+	reader := io.TeeReader(body, hash)
 	var m registry.Manifest
-	if err := json.NewDecoder(body).Decode(&m); err != nil {
+	if err := json.NewDecoder(reader).Decode(&m); err != nil {
 		return nil, errors.Wrap(err,
 			errors.WithCodeManifestInvalid(),
 		)
 	}
+	sha256sum := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+
 	// create directory
-	path := registry.PathJoinWithBase(name, tag)
+	path := registry.PathJoinWithBase(name, baseTagDir)
 	os.MkdirAll(path, 0700)
 
-	// create manifest file onto it
-	path = filepath.Join(path, "manifest.json")
-	f, err := os.Create(path)
+	// create tag file
+	tagPath := filepath.Join(path, tag)
+	tagFile, err := os.Create(tagPath)
 	if err != nil {
 		return nil, errors.Wrap(err,
 			errors.WithCodeTagInvalid(),
 		)
 	}
-	defer f.Close()
-	if err := json.NewEncoder(f).Encode(&m); err != nil {
+	tagFile.Write([]byte(sha256sum))
+	tagFile.Close()
+
+	manifestPath := registry.PathJoinWithBase(name, sha256sum)
+	os.MkdirAll(manifestPath, 0700)
+
+	// create manifest file onto it
+	manifestPath = filepath.Join(manifestPath, "manifest.json")
+	manifestF, err := os.Create(manifestPath)
+	if err != nil {
+		return nil, errors.Wrap(err,
+			errors.WithCodeTagInvalid(),
+		)
+	}
+	defer manifestF.Close()
+	if err := json.NewEncoder(manifestF).Encode(&m); err != nil {
 		return nil, err
 	}
 	return &m, nil
@@ -131,8 +154,17 @@ func (l *Local) FindBlobByImage(name, digest string) (*os.File, error) {
 }
 
 // FindManifestByImage finds manifest json file by image name and that's tag.
-func (l *Local) FindManifestByImage(name, tag string) (*registry.Manifest, error) {
-	manifest := registry.PathJoinWithBase(name, tag, "manifest.json")
+func (l *Local) FindManifestByImage(name, ref string) (*registry.Manifest, error) {
+	tagFilePath := registry.PathJoinWithBase(name, baseTagDir, ref)
+	if _, err := os.Stat(tagFilePath); err == nil {
+		digest, err := ioutil.ReadFile(tagFilePath)
+		if err != nil {
+			return nil, errors.Wrap(err)
+		}
+		ref = string(digest)
+	}
+
+	manifest := registry.PathJoinWithBase(name, ref, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return nil, errors.Wrap(err,
 			errors.WithCodeManifestUnknown(),
@@ -152,7 +184,7 @@ func (l *Local) FindManifestByImage(name, tag string) (*registry.Manifest, error
 
 // DeleteManifestByImage deletes manifest json file by image name and that's tag.
 func (l *Local) DeleteManifestByImage(name, tag string) error {
-	tagDir := registry.PathJoinWithBase(name, tag)
+	tagDir := registry.PathJoinWithBase(name, baseTagDir, tag)
 	manifest := filepath.Join(tagDir, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return errors.Wrap(err,
@@ -173,4 +205,23 @@ func (l *Local) DeleteBlobByImage(name, digest string) error {
 		)
 	}
 	return os.RemoveAll(dir)
+}
+
+// ListTags lists tags by image name.
+func (l *Local) ListTags(name string) ([]string, error) {
+	path := registry.PathJoinWithBase(name, baseTagDir)
+	fis, err := ioutil.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.Wrap(err,
+				errors.WithStatusCode(http.StatusNotFound),
+			)
+		}
+		return nil, err
+	}
+	tags := make([]string, len(fis))
+	for i, tag := range fis {
+		tags[i] = tag.Name()
+	}
+	return tags, nil
 }

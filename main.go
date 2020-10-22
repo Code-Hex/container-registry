@@ -36,6 +36,11 @@ const (
 
 const hostname = "localhost:5080"
 
+var unsupportedHandler = Handler(func(w http.ResponseWriter, r *http.Request) error {
+	err := fmt.Errorf("unsupported")
+	return errors.Wrap(err, errors.WithCodeUnsupported())
+})
+
 // spec
 // https://github.com/opencontainers/distribution-spec/blob/master/spec.md
 func main() {
@@ -56,7 +61,7 @@ func main() {
 	// /v2/:name/manifests/:reference
 	rs.GET(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{tag:%s}`,
+			`/v2/{name:%s}/manifests/{reference:%s}`,
 			grammar.Name, grammar.Reference,
 		),
 		PullingManifests(),
@@ -96,6 +101,7 @@ func main() {
 		PushBlobHead(),
 	)
 
+	// Group -- /v2/<name>/manifests/<reference>
 	rs.PUT(
 		fmt.Sprintf(
 			`/v2/{name:%s}/manifests/{tag:%s}`,
@@ -103,17 +109,40 @@ func main() {
 		),
 		PushManifestPut(),
 	)
+	rs.PUT(
+		fmt.Sprintf(
+			`/v2/{name:%s}/manifests/{digest:%s}`,
+			grammar.Name, grammar.Digest,
+		),
+		unsupportedHandler,
+	)
+	// Group End
 
 	// /?n=<integer>&last=<integer>
-	rs.Handle(GET, "/v2/:name/tags/list", nil)
+	rs.GET(
+		fmt.Sprintf(
+			"/v2/{name:%s}/tags/list",
+			grammar.Name,
+		),
+		ListTags(),
+	)
 
+	// Group -- /v2/<name>/manifests/<reference>
 	rs.DELETE(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{reference:%s}`,
-			grammar.Name, grammar.Reference,
+			`/v2/{name:%s}/manifests/{tag:%s}`,
+			grammar.Name, grammar.Tag,
 		),
 		DeleteManifest(),
 	)
+	rs.DELETE(
+		fmt.Sprintf(
+			`/v2/{name:%s}/manifests/{digest:%s}`,
+			grammar.Name, grammar.Digest,
+		),
+		unsupportedHandler,
+	)
+	// Group End
 
 	rs.DELETE(
 		fmt.Sprintf(
@@ -201,8 +230,8 @@ func PullingManifests() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		tag := router.ParamFromContext(ctx, "tag")
-		m, err := s.FindManifestByImage(name, tag)
+		ref := router.ParamFromContext(ctx, "reference")
+		m, err := s.FindManifestByImage(name, ref)
 		if err != nil {
 			return err
 		}
@@ -237,7 +266,7 @@ func PushBlobPatch() http.Handler {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		sessionID := router.ParamFromContext(ctx, "reference")
-		size, err := s.PutBlobBySession(sessionID, name, r.Body)
+		size, err := s.PutBlobByReference(sessionID, name, r.Body)
 		if err != nil {
 			return err
 		}
@@ -272,7 +301,7 @@ func PushBlobPut() http.Handler {
 		// https://github.com/opencontainers/distribution-spec/blob/master/spec.md#pushing-a-blob-monolithically
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "application/octet-stream" {
-			_, err := s.PutBlobBySession(sessionID, name, r.Body)
+			_, err := s.PutBlobByReference(dgst.String(), name, r.Body)
 			if err != nil {
 				return err
 			}
@@ -349,8 +378,8 @@ func DeleteManifest() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		reference := router.ParamFromContext(ctx, "reference")
-		if err := s.DeleteManifestByImage(name, reference); err != nil {
+		tag := router.ParamFromContext(ctx, "tag")
+		if err := s.DeleteManifestByImage(name, tag); err != nil {
 			return err
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -373,5 +402,30 @@ func DeleteBlob() http.Handler {
 		}
 		w.WriteHeader(http.StatusAccepted)
 		return nil
+	})
+}
+
+// ListTags a handler to list tags.
+//
+// perform a GET request to a path in the following format: /v2/<name>/tags/list
+// <name> is the namespace of the repository.
+func ListTags() http.Handler {
+	type Tags struct {
+		Name string   `json:"name"`
+		Tags []string `json:"tags"`
+	}
+	s := new(storage.Local)
+	return Handler(func(w http.ResponseWriter, r *http.Request) error {
+		ctx := r.Context()
+		name := router.ParamFromContext(ctx, "name")
+		tags, err := s.ListTags(name)
+		if err != nil {
+			return err
+		}
+		resp := &Tags{
+			Name: name,
+			Tags: tags,
+		}
+		return json.NewEncoder(w).Encode(resp)
 	})
 }

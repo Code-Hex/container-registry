@@ -1,5 +1,5 @@
 .PHONY: clean
 clean:
-	rm -rf testdata/library
+	rm -rf testdata/*
 build:
 	go build -o bin/registry -trimpath -ldflags "-w -s"

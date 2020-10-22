@@ -12,6 +12,15 @@ func WithCodeUnknown() WrapOption {
 	}
 }
 
+// WithCodeUnsupported is returned when an operation is not supported.
+func WithCodeUnsupported() WrapOption {
+	return func(e *Error) {
+		e.Code = "UNSUPPORTED"
+		e.Message = "The operation is unsupported."
+		e.StatusCode = http.StatusMethodNotAllowed
+	}
+}
+
 // ----- Error Code spec
 //
 // see: https://github.com/opencontainers/distribution-spec/blob/master/spec.md#error-codes
