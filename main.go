@@ -247,17 +247,38 @@ func PullingManifests() http.Handler {
 func PushBlobPost() http.Handler {
 	s := new(storage.Local)
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
-		sessionID := s.IssueSession()
 		name := router.ParamFromContext(r.Context(), "name")
-		location := "/v2/" + name + "/blobs/uploads/" + sessionID
-		w.Header().Set("Location", location)
-		w.WriteHeader(http.StatusAccepted)
+		if r.Header.Get("Content-Type") != "application/octet-stream" {
+			sessionID := s.IssueSession()
+			location := "/v2/" + name + "/blobs/uploads/" + sessionID
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusAccepted)
+			return nil
+		}
+
+		// For Pushing a blob monolithically: // only POST
+		// https://github.com/opencontainers/distribution-spec/blob/master/spec.md#pushing-a-blob-monolithically
+		dgst, err := digest.Parse(r.URL.Query().Get("digest"))
+		if err != nil {
+			return errors.Wrap(err,
+				errors.WithCodeDigestInvalid(),
+			)
+		}
+		d := dgst.String()
+
+		if _, err := s.PutBlobByReference(d, name, r.Body); err != nil {
+			return err
+		}
+		pullableLoc := "/v2/" + name + "/blobs/" + d
+		w.Header().Set("Location", pullableLoc)
+		w.WriteHeader(http.StatusCreated)
 		return nil
 	})
 }
 
 // PushBlobPatch a handler to push a blob. this handler accepts image body and put to storage by session ID.
 //
+// Pushing a blob in chunks: POST (Obtain a session ID) -> PATCH (Upload the chunks) -> PUT (Close the session)
 // perform a PATCH request to a URL in the following form: /v2/<name>/blobs/uploads/<reference>
 // <name> refers to the namespace of the repository, <reference> will be session ID.
 func PushBlobPatch() http.Handler {
