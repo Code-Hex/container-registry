@@ -380,11 +380,13 @@ func PushManifestPut() http.Handler {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		tag := router.ParamFromContext(ctx, "tag")
-		m, err := s.CreateManifest(r.Body, name, tag)
+		_, sha256sum, err := s.CreateManifest(r.Body, name, tag)
 		if err != nil {
 			return err
 		}
-		w.Header().Set("Docker-Content-Digest", m.Config.Digest.String())
+		pullableLoc := "/v2/" + name + "/manifests/" + tag
+		w.Header().Set("Docker-Content-Digest", sha256sum)
+		w.Header().Set("Location", pullableLoc)
 		w.WriteHeader(http.StatusCreated)
 		return nil
 	})
