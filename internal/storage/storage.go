@@ -21,8 +21,8 @@ type Repository interface {
 	IssueSession() string
 	PutBlobByReference(ref string, imgName string, body io.Reader) (int64, error)
 	EnsurePutBlobBySession(sessionID string, imgName string, digest string) error
-	CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error)
-	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error)
+	CheckBlobByReference(imgName string, ref string) (os.FileInfo, error)
+	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, string, error)
 
 	// Pull
 	FindBlobByImage(name, digest string) (*os.File, error)
@@ -77,9 +77,9 @@ func (l *Local) EnsurePutBlobBySession(sessionID string, imgName string, digest 
 	return nil
 }
 
-// CheckBlobByDigest checks for the existence of a blob with a digest.
-func (l *Local) CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error) {
-	dir := registry.PathJoinWithBase(imgName, digest)
+// CheckBlobByReference checks for the existence of a blob with a ref.
+func (l *Local) CheckBlobByReference(imgName string, ref string) (os.FileInfo, error) {
+	dir := registry.PathJoinWithBase(imgName, ref)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil, errors.Wrap(err,
 			errors.WithStatusCode(http.StatusNotFound),
@@ -91,12 +91,12 @@ func (l *Local) CheckBlobByDigest(imgName string, digest string) (os.FileInfo, e
 // CreateManifest creates manifest json file by name and tag.
 //
 // this method creates to "<image-name>/<tag>/manifest.json"
-func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, error) {
+func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, string, error) {
 	hash := sha256.New()
 	reader := io.TeeReader(body, hash)
 	var m registry.Manifest
 	if err := json.NewDecoder(reader).Decode(&m); err != nil {
-		return nil, errors.Wrap(err,
+		return nil, "", errors.Wrap(err,
 			errors.WithCodeManifestInvalid(),
 		)
 	}
@@ -110,7 +110,7 @@ func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*regist
 	tagPath := filepath.Join(path, tag)
 	tagFile, err := os.Create(tagPath)
 	if err != nil {
-		return nil, errors.Wrap(err,
+		return nil, "", errors.Wrap(err,
 			errors.WithCodeTagInvalid(),
 		)
 	}
@@ -124,15 +124,15 @@ func (l *Local) CreateManifest(body io.Reader, name string, tag string) (*regist
 	manifestPath = filepath.Join(manifestPath, "manifest.json")
 	manifestF, err := os.Create(manifestPath)
 	if err != nil {
-		return nil, errors.Wrap(err,
+		return nil, "", errors.Wrap(err,
 			errors.WithCodeTagInvalid(),
 		)
 	}
 	defer manifestF.Close()
 	if err := json.NewEncoder(manifestF).Encode(&m); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return &m, nil
+	return &m, sha256sum, nil
 }
 
 // FindBlobByImage finds blob by docker image name and that's digest.
