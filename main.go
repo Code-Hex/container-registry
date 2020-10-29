@@ -518,13 +518,30 @@ func ListTags() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
+		q := r.URL.Query()
+		nq, lastq := q.Get("n"), q.Get("last")
 		tags, err := s.ListTags(name)
 		if err != nil {
 			return err
 		}
+
+		n := len(tags)
+		if nq != "" {
+			n, err = strconv.Atoi(nq)
+			if err != nil {
+				return err
+			}
+		}
+		retTags := make([]string, 0, n)
+		for i, v := range tags {
+			if i == n || v == lastq {
+				break
+			}
+			retTags = append(retTags, v)
+		}
 		resp := &Tags{
 			Name: name,
-			Tags: tags,
+			Tags: retTags,
 		}
 		return json.NewEncoder(w).Encode(resp)
 	})
