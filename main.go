@@ -295,13 +295,14 @@ func PushBlobPatch() http.Handler {
 		// If does not specify content-range or content-length, accepts request
 		// as full upload of the file.
 		if contentRange == "" || contentLength == "" {
-			_, err := s.PutBlobByReference(sessionID, name, r.Body)
+			size, err := s.PutBlobByReference(sessionID, name, r.Body)
 			if err != nil {
 				return err
 			}
 			location := "/v2/" + name + "/blobs/uploads/" + sessionID
 			w.Header().Set("Location", location)
 			w.Header().Set("Docker-Upload-UUID", sessionID)
+			w.Header().Set("Range", fmt.Sprintf("0-%d", size))
 			w.WriteHeader(http.StatusAccepted)
 			return nil
 		}
