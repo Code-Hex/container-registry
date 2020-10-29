@@ -130,7 +130,7 @@ func WithCodeBlobUploadUnknown() WrapOption {
 	return func(e *Error) {
 		e.Code = "BLOB_UPLOAD_UNKNOWN"
 		e.Message = "blob upload unknown to registry"
-		e.StatusCode = http.StatusNotFound
+		e.StatusCode = http.StatusRequestedRangeNotSatisfiable
 	}
 }
 

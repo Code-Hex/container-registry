@@ -59,6 +59,13 @@ func (e *Error) Error() string {
 	return e.Err.Error()
 }
 
+func (e *Error) Unwrap() error {
+	if e.Err == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // ServeJSON attempts to serve the errcode in a JSON envelope. It marshals err
 // and sets the content-type header to 'application/json'. It will handle
 // Error and some errors which is converted to Error, and if necessary will create an envelope.

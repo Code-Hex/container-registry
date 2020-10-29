@@ -21,7 +21,7 @@ type Repository interface {
 	IssueSession() string
 	PutBlobByReference(ref string, imgName string, body io.Reader) (int64, error)
 	EnsurePutBlobBySession(sessionID string, imgName string, digest string) error
-	CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error)
+	CheckBlobByReference(imgName string, ref string) (os.FileInfo, error)
 	CreateManifest(body io.Reader, name string, tag string) (*registry.Manifest, string, error)
 
 	// Pull
@@ -77,9 +77,9 @@ func (l *Local) EnsurePutBlobBySession(sessionID string, imgName string, digest 
 	return nil
 }
 
-// CheckBlobByDigest checks for the existence of a blob with a digest.
-func (l *Local) CheckBlobByDigest(imgName string, digest string) (os.FileInfo, error) {
-	dir := registry.PathJoinWithBase(imgName, digest)
+// CheckBlobByReference checks for the existence of a blob with a ref.
+func (l *Local) CheckBlobByReference(imgName string, ref string) (os.FileInfo, error) {
+	dir := registry.PathJoinWithBase(imgName, ref)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil, errors.Wrap(err,
 			errors.WithStatusCode(http.StatusNotFound),

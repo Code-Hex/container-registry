@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	e "errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/Code-Hex/container-registry/internal/errors"
@@ -287,14 +289,88 @@ func PushBlobPatch() http.Handler {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
 		sessionID := router.ParamFromContext(ctx, "reference")
-		size, err := s.PutBlobByReference(sessionID, name, r.Body)
+		contentRange := r.Header.Get("Content-Range")
+		contentLength := r.Header.Get("Content-Length")
+
+		// If does not specify content-range or content-length, accepts request
+		// as full upload of the file.
+		if contentRange == "" || contentLength == "" {
+			_, err := s.PutBlobByReference(sessionID, name, r.Body)
+			if err != nil {
+				return err
+			}
+			location := "/v2/" + name + "/blobs/uploads/" + sessionID
+			w.Header().Set("Location", location)
+			w.Header().Set("Docker-Upload-UUID", sessionID)
+			w.WriteHeader(http.StatusAccepted)
+			return nil
+		}
+
+		// From here accepted Content-Range request.
+		bodyLen, err := strconv.ParseInt(contentLength, 10, 64)
 		if err != nil {
+			return errors.Wrap(err,
+				errors.WithCodeBlobUnknown(),
+				errors.WithStatusCode(http.StatusBadRequest),
+			)
+		}
+
+		// We have to care for "bytes " prefix on Content-Range by rfc7233.
+		// But distribution-spec/conformance test did not use this prefix.
+		// see: https://github.com/opencontainers/distribution-spec/pull/203
+		idx := strings.Index(contentRange, "bytes ")
+		if idx != -1 {
+			contentRange = contentRange[idx+1:]
+		}
+
+		var start, end int
+		_, err = fmt.Sscanf(contentRange, "%d-%d", &start, &end)
+		if err != nil {
+			return errors.Wrap(err,
+				errors.WithCodeBlobUploadUnknown(),
+			)
+		}
+		var fsize int64
+		info, err := s.CheckBlobByReference(name, sessionID)
+		if err == nil {
+			fsize = info.Size()
+		}
+		if !os.IsNotExist(e.Unwrap(err)) {
 			return err
 		}
+		// Example of range request:
+		// Content-Range: bytes 21010-47021/47022
+		// Content-Length: 26012
+		if int64(start) != fsize || int64(end-start+1) != bodyLen {
+			return errors.Wrap(err,
+				errors.WithCodeBlobUploadUnknown(),
+			)
+		}
+		if start == 0 {
+			size, err := s.PutBlobByReference(sessionID, name, r.Body)
+			if err != nil {
+				return err
+			}
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Range", fmt.Sprintf("0-%d", size))
+		} else {
+			path := registry.PathJoinWithBase(name, sessionID)
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			size, err := io.Copy(f, r.Body)
+			if err != nil {
+				return err
+			}
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Range", fmt.Sprintf("%d-%d", start, int64(start)+size))
+		}
+
 		location := "/v2/" + name + "/blobs/uploads/" + sessionID
 		w.Header().Set("Location", location)
 		w.Header().Set("Docker-Upload-UUID", sessionID)
-		w.Header().Set("Range", fmt.Sprintf("0-%d", size))
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	})
@@ -358,7 +434,7 @@ func PushBlobHead() http.Handler {
 			)
 		}
 		name := router.ParamFromContext(ctx, "name")
-		fi, err := s.CheckBlobByDigest(name, dgst.String())
+		fi, err := s.CheckBlobByReference(name, dgst.String())
 		if err != nil {
 			return err
 		}
