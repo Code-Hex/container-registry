@@ -29,12 +29,10 @@ jobs:
         repository: opencontainers/distribution-spec
         path: distribution-spec
         ref: db37dc2b2b6c0f8dc1f220e434611c7eaa238ff0
-    - name: cd conformance dir of opencontainers/distribution-spec
-      run: cd ./distribution-spec/conformance
     - name: compile test code
-      run: go test -c
+      run: cd ./distribution-spec/conformance && go test -c
     - name: run test
-      run: ./conformance.test
+      run: ./distribution-spec/conformance/conformance.test
       env:
         OCI_ROOT_URL: http://codehex-local:5080
         OCI_NAMESPACE: myorg/myrepo
