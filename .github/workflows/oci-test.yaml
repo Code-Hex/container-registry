@@ -1,0 +1,44 @@
+name: OCI Conformance Tests
+on:
+  push:
+    branches:
+    - "master"
+  pull_request: {}
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+    - name: setup go
+      uses: actions/setup-go@v2
+    - name: build
+      run: make build
+    - name: run local registry
+      run: ./bin/registry &
+    - name: add host for test
+      run: sudo echo "127.0.0.1 codehex-local" | sudo tee -a /etc/hosts
+    - name: checkout opencontainers/distribution-spec repo
+      uses: actions/checkout@v2
+      with:
+        repository: opencontainers/distribution-spec
+        path: distribution-spec
+        ref: db37dc2b2b6c0f8dc1f220e434611c7eaa238ff0
+    - name: cd conformance dir of opencontainers/distribution-spec
+      run: cd ./distribution-spec/conformance
+    - name: compile test code
+      run: go test -c
+    - name: run test
+      run: ./conformance.test
+      env:
+        OCI_ROOT_URL: http://codehex-local:5080
+        OCI_NAMESPACE: myorg/myrepo
+        OCI_TEST_PULL: 1
+        OCI_TEST_PUSH: 1
+        OCI_TEST_CONTENT_DISCOVERY: 0
+        OCI_TEST_CONTENT_MANAGEMENT: 0
