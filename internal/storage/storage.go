@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/Code-Hex/container-registry/internal/errors"
 	"github.com/Code-Hex/container-registry/internal/registry"
 	"github.com/google/uuid"
+	"github.com/opencontainers/go-digest"
 )
 
 // Repository represents the storage behavior.
@@ -183,15 +185,27 @@ func (l *Local) FindManifestByImage(name, ref string) (*registry.Manifest, error
 }
 
 // DeleteManifestByImage deletes manifest json file by image name and that's tag.
-func (l *Local) DeleteManifestByImage(name, tag string) error {
-	tagDir := registry.PathJoinWithBase(name, baseTagDir, tag)
-	manifest := filepath.Join(tagDir, "manifest.json")
+func (l *Local) DeleteManifestByImage(name, ref string) (err error) {
+	if _, err := digest.Parse(ref); err != nil {
+		// remove tag too
+		tag := registry.PathJoinWithBase(name, baseTagDir, ref)
+		dgst, err := ioutil.ReadFile(tag)
+		if err != nil {
+			log.Println("-----------", err, tag)
+			return errors.Wrap(err)
+		}
+		os.Remove(tag)
+		ref = string(dgst)
+	}
+
+	manifestDir := registry.PathJoinWithBase(name, ref)
+	manifest := filepath.Join(manifestDir, "manifest.json")
 	if _, err := os.Stat(manifest); os.IsNotExist(err) {
 		return errors.Wrap(err,
-			errors.WithStatusCode(http.StatusBadRequest),
+			errors.WithStatusCode(http.StatusAccepted),
 		)
 	}
-	return os.RemoveAll(tagDir)
+	return os.RemoveAll(manifestDir)
 }
 
 // DeleteBlobByImage deletes blob by docker image name and that's digest.
