@@ -129,22 +129,13 @@ func main() {
 		ListTags(),
 	)
 
-	// Group -- /v2/<name>/manifests/<reference>
 	rs.DELETE(
 		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{tag:%s}`,
-			grammar.Name, grammar.Tag,
+			`/v2/{name:%s}/manifests/{reference:%s}`,
+			grammar.Name, grammar.Reference,
 		),
 		DeleteManifest(),
 	)
-	rs.DELETE(
-		fmt.Sprintf(
-			`/v2/{name:%s}/manifests/{digest:%s}`,
-			grammar.Name, grammar.Digest,
-		),
-		unsupportedHandler,
-	)
-	// Group End
 
 	rs.DELETE(
 		fmt.Sprintf(
@@ -478,7 +469,7 @@ func DeleteManifest() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
-		tag := router.ParamFromContext(ctx, "tag")
+		tag := router.ParamFromContext(ctx, "reference")
 		if err := s.DeleteManifestByImage(name, tag); err != nil {
 			return err
 		}
@@ -518,13 +509,30 @@ func ListTags() http.Handler {
 	return Handler(func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		name := router.ParamFromContext(ctx, "name")
+		q := r.URL.Query()
+		nq, lastq := q.Get("n"), q.Get("last")
 		tags, err := s.ListTags(name)
 		if err != nil {
 			return err
 		}
+
+		n := len(tags)
+		if nq != "" {
+			n, err = strconv.Atoi(nq)
+			if err != nil {
+				return err
+			}
+		}
+		retTags := make([]string, 0, n)
+		for i, v := range tags {
+			if i == n || v == lastq {
+				break
+			}
+			retTags = append(retTags, v)
+		}
 		resp := &Tags{
 			Name: name,
-			Tags: tags,
+			Tags: retTags,
 		}
 		return json.NewEncoder(w).Encode(resp)
 	})
